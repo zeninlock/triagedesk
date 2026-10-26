@@ -1,3 +1,13 @@
+# Architecture update: verified public-repository workspaces
+
+The current GitHub-authenticated connection and deployment behavior is specified in [HOSTING.md](HOSTING.md) and the [README](../README.md). Authentication verifies a GitHub user, then repository authorization separately verifies numeric ownership or a GitHub-reported maintainer role. Production data reads require a connected workspace; every review/judgment write and import rechecks upstream access.
+
+The new modules are `authentication.py` (encrypted credentials and expiring sessions), `connection_routes.py` (auth/connection endpoints), `connections.py` (bounded background jobs with a database-enforced active slot and renewable lease), and `auto_categories.py` (explicitly distinguished trained, source-label, and rule suggestions). Migration `0002` adds four tables and prediction provenance without replacing the initial migration.
+
+The initial architecture notes below describe the earlier fixture/CLI implementation. References to a shared reviewer credential or private-only import commands apply to that local mode; hosted GitHub mode uses the mechanisms above. Training/evaluation and model downloads remain private administrative operations.
+
+---
+
 # Architecture
 
 ```mermaid

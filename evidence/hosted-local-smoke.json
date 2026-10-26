@@ -1,0 +1,24 @@
+{
+  "checked_at": "2026-10-26T13:26:09.995044+00:00",
+  "ui_url": "http://localhost:18510",
+  "api_url": "http://localhost:18010",
+  "cloud_deployed": false,
+  "/health/ready": {
+    "status": "ready",
+    "mode": "real",
+    "model_required": false
+  },
+  "/meta": {
+    "name": "TriageDesk",
+    "mode": "real",
+    "writes_enabled": true,
+    "auth_mode": "github",
+    "github_browser_login": false,
+    "token_login": true,
+    "connection_limit": 3000,
+    "scores": "Model scores are not calibrated probabilities",
+    "github_writes": false
+  },
+  "unauthenticated_data_status": 401,
+  "ui_health": "ok"
+}

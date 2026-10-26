@@ -1,3 +1,12 @@
+# Version 0.2 decisions
+
+- **GitHub identity and repository authorization are separate.** An account is established by GitHub's user endpoint; numeric owner IDs or a repository role endpoint establish maintainer access. Writes recheck access. Public issue readability alone never grants review/import rights.
+- **Device authorization suits the split UI/private API.** The GitHub App can use read-only metadata/issues permissions, without a browser callback carrying a provider token between services. Fine-grained token sign-in is an optional alternative. Credentials are encrypted in backend storage, application sessions are opaque/digested, and Streamlit session state holds the active application credential. Browser refresh can require signing in again.
+- **Bounded imports have explicit progress and concurrency limits.** One database-enforced active job runs per installation. A renewable lease releases interrupted jobs for retry. This is a single-instance MVP, not a distributed queue; partial history remains labeled partial.
+- **Fallback provenance stays explicit.** A repository-trained model is used when available. Otherwise, recognized source labels or unscored text rules can suggest categories, with ambiguous text left manual. No fallback probability or measured quality is fabricated. Historical classifier metrics are kept separate.
+
+---
+
 # Decision log
 
 | Decision | Reason and cost |

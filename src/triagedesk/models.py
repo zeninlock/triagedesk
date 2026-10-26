@@ -221,7 +221,7 @@ class ConnectionJob(Base):
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     github_user_id: Mapped[int] = mapped_column(BigInteger, index=True)
-    session_id: Mapped[int] = mapped_column(ForeignKey("auth_sessions.id"))
+    session_id: Mapped[int | None] = mapped_column(ForeignKey("auth_sessions.id", ondelete="SET NULL"))
     repository_name: Mapped[str] = mapped_column(String(200))
     repository_id: Mapped[int | None] = mapped_column(ForeignKey("repositories.id"))
     incremental: Mapped[bool] = mapped_column(Boolean, default=False)

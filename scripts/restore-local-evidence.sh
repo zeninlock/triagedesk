@@ -2,7 +2,7 @@
 # Restore only into a new, isolated local project. Never overwrite an existing database.
 set -eu
 bundle=${1:?Usage: sh scripts/restore-local-evidence.sh /absolute/path/triagedesk-real-data.tar.gz}
-export MODE=real READ_ONLY=true
+export MODE=real READ_ONLY=true AUTH_MODE=local
 export DB_PORT=${DB_PORT:-55433} API_PORT=${API_PORT:-18003} UI_PORT=${UI_PORT:-18503}
 project_name=${TRIAGEDESK_EVIDENCE_PROJECT:-triagedesk-evidence}
 compose() { docker compose --project-name "$project_name" "$@"; }

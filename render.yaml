@@ -1,9 +1,10 @@
-# Prepared and schema-checked, not deployed. Paid resources; review docs/DEPLOYMENT.md first.
+# Production GitHub-authenticated deployment. Paid resources; review docs/HOSTING.md.
 services:
   - type: pserv
     name: triagedesk-api
     runtime: docker
     plan: 0.5c-512mb
+    numInstances: 1
     region: singapore
     dockerfilePath: ./Dockerfile
     dockerCommand: sh scripts/start-api.sh
@@ -13,13 +14,17 @@ services:
       - key: ARTIFACT_DIR
         value: /var/data/artifacts
       - key: MODE
-        value: fixture
-      - key: READ_ONLY
+        value: real
+      - key: AUTH_MODE
+        value: github
+      - key: AUTH_ENCRYPTION_KEY
+        generateValue: true
+      - key: ALLOW_TOKEN_LOGIN
         value: "true"
-      - key: REVIEWER_TOKEN
-        sync: false
-      - key: REVIEWER_NAME
-        value: maintainer
+      - key: READ_ONLY
+        value: "false"
+      - key: SESSION_HOURS
+        value: "8"
       - key: PORT
         value: "8000"
     disk:
@@ -30,6 +35,7 @@ services:
     name: triagedesk-ui
     runtime: docker
     plan: 0.5c-512mb
+    numInstances: 1
     region: singapore
     dockerfilePath: ./Dockerfile
     dockerCommand: sh scripts/start-ui.sh

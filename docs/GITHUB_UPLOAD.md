@@ -134,7 +134,7 @@ After publication:
 
 1. Confirm that the README renders and the screenshots and documentation links work.
 2. Confirm that `.github/workflows/ci.yml`, `.env.example`, `uv.lock`, tests, and the license are present.
-3. Open the **Actions** tab and inspect the CI run triggered by the push. The project has a recorded local result of 46 passing tests; a remote success should only be claimed after that run actually passes. If Actions is disabled for the account or repository, enable it before expecting a run.
+3. Open the **Actions** tab and inspect the CI run triggered by the push. The project has a recorded local result of 68 passing tests; a remote success should only be claimed after that run actually passes. If Actions is disabled for the account or repository, enable it before expecting a run.
 4. Add the description and, optionally, topics such as `python`, `fastapi`, `postgresql`, `streamlit`, `machine-learning`, `issue-triage`, and `docker`.
 5. Keep the homepage field empty unless you have a real, verified hosted application URL. A GitHub source repository is not a deployed application.
 

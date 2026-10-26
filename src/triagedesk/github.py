@@ -36,8 +36,8 @@ def aware(value):
 
 
 class GitHubClient:
-    def __init__(self, client=None, sleep=time.sleep, max_retries=3, max_wait=60):
-        token = settings().github_token.get_secret_value()
+    def __init__(self, client=None, sleep=time.sleep, max_retries=3, max_wait=60, token=None):
+        token = settings().github_token.get_secret_value() if token is None else token
         self.client = client or httpx.Client(
             base_url="https://api.github.com",
             timeout=30,
@@ -186,7 +186,7 @@ def upsert_issue(session, repository, raw):
     return "imported" if is_new else ("updated" if old_snapshot_id != snapshot.id else "unchanged")
 
 
-def ingest(db_engine, name, limit=2000, incremental=False, client=None):
+def ingest(db_engine, name, limit=2000, incremental=False, client=None, progress=None):
     name = valid_repository(name)
     if not 1 <= limit <= 100_000:
         raise ValueError("Import limit must be between 1 and 100000 response objects")
@@ -238,8 +238,13 @@ def ingest(db_engine, name, limit=2000, incremental=False, client=None):
                     if times:
                         repo.checkpoint = max(times + ([aware(repo.checkpoint)] if repo.checkpoint else []))
                     exhausted = not has_next and len(selected) == len(page)
-                    if run.fetched >= limit or exhausted:
-                        break
+                    finished = run.fetched >= limit or exhausted
+                if progress:
+                    progress(
+                        {key: getattr(run, key) for key in ("fetched", "imported", "updated", "excluded")}
+                    )
+                if finished:
+                    break
             with session.begin():
                 repo = session.get(Repository, repo_id)
                 run = session.get(ImportRun, run_id)

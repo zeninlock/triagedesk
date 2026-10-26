@@ -1,8 +1,8 @@
 # TriageDesk
 
-**AI Issue Triage and Product Feedback Dashboard**
+**GitHub-authenticated issue triage and product feedback dashboard**
 
-TriageDesk is a local web application that helps maintainers inspect and organize GitHub issues. It imports public reports, suggests **bug**, **enhancement**, or **question**, retrieves potentially related issues, and records a human decision with an audit history.
+TriageDesk is a web application for verified GitHub maintainers to connect public repositories and organize their actual issues. It imports public reports through the dashboard, prepares **bug**, **enhancement**, or **question** suggestions, retrieves potentially related issues, and records a human decision with the verified reviewer identity.
 
 It combines a review dashboard with a reproducible machine-learning pipeline. GitHub access is read-only: the application never changes source labels, closes issues, or posts comments. Classification and similarity scores support a reviewer; they do not establish correctness or prove that reports are duplicates.
 
@@ -12,6 +12,8 @@ Implemented end to end with FastAPI, PostgreSQL, SQLAlchemy/Alembic, scikit-lear
 
 ## Contents
 
+- [Connect your repository](#connect-your-repository)
+- [Host online](#host-online)
 - [Problem and intended users](#problem-and-intended-users)
 - [Features](#features)
 - [Example workflow](#example-workflow)
@@ -30,6 +32,27 @@ Implemented end to end with FastAPI, PostgreSQL, SQLAlchemy/Alembic, scikit-lear
 - [Documentation](#documentation-and-limits)
 - [License and attribution](#license-and-attribution)
 
+## Connect your repository
+
+The production workflow is **sign in → verify maintainer access → paste a public repository → import and categorize → review**. Terminal import commands are no longer required for normal maintainers.
+
+To try verified mode locally, with Docker running and Python 3 available for the one-time configuration helper:
+
+```sh
+python3 scripts/setup-github-local.py
+docker compose up --build -d --wait
+```
+
+The helper preserves existing settings, generates a private encryption key if needed, and selects `MODE=real`, `AUTH_MODE=github`, and protected writes. Open [the dashboard](http://localhost:8501). Sign in with a fine-grained GitHub token granting Metadata: read and Issues: read for the repository. Alternatively, configure a read-only GitHub App and `GITHUB_CLIENT_ID` to enable browser/device sign-in; see [the hosting guide](docs/HOSTING.md).
+
+Open **Connect repository**, enter `owner/repository` or its canonical GitHub URL, choose the fetch cap, and submit. GitHub must confirm ownership or triage/write/maintain/admin access. The app tracks import progress, excludes PRs, saves issue snapshots, prepares suggestions, and builds TF-IDF search. Select the repository and use the category filter in the review queue. Later, use the same form's synchronization option to fetch updates.
+
+A repository without issues yields an empty queue. Capped imports are partial. Trained models are used for their own repository when installed; otherwise, clear GitHub category labels and unscored text rules provide suggestions. Ambiguous reports remain for manual categorization. No measured accuracy is claimed for these fallback methods, and human decisions take precedence.
+
+## Host online
+
+Follow [the complete Render hosting and GitHub authentication guide](docs/HOSTING.md). The included blueprint provisions a public HTTPS interface, private API, managed PostgreSQL, persistent artifact disk, and generated encryption key. It uses individual GitHub sessions and does not accept the shared local reviewer token. Review Render's current paid-resource total before provisioning. No cloud resources or live deployment have been created by this source update.
+
 ## Problem and intended users
 
 An issue tracker can accumulate bug reports, feature requests, usage questions, and overlapping discussions. A maintainer must read those reports, understand their intent, search for previous work, and track decisions. TriageDesk provides one review interface for that initial assessment.
@@ -42,16 +65,17 @@ Here, “product feedback” means the reports in a GitHub issue tracker. The ap
 
 | Capability | Behavior |
 |---|---|
+| Verified GitHub connection | Sign in, confirm repository maintainer permissions, and start an observable import/sync job from the dashboard. |
 | Public GitHub ingestion | Import open and closed issues, exclude pull requests, handle pagination and rate limits, and preserve source revisions. |
-| Category suggestions | Apply a saved TF-IDF/logistic-regression classifier to title/body text, expose all three scores, and flag low-score suggestions. |
+| Category suggestions | Use a compatible repository classifier when installed; otherwise show clearly marked source-label/rule suggestions and leave ambiguous reports for manual review. |
 | Related-report search | Retrieve up to five candidates with TF-IDF or optional pinned CPU MiniLM embeddings; exclude self and stale/unavailable records. |
 | Human review | Accept or correct a suggestion, defer or skip a report, add a note, and inspect previous decisions. |
 | Review safeguards | Reject stale forms and conflicting updates; recognize repeated submissions without duplicating history. |
 | Filtered analytics | Filter by repository, source creation date, open/closed state, category source, and review status. |
 | Reproducible evaluation | Preserve dataset membership, label mapping, chronological splits, model settings, dependency versions, metrics, and artifacts. |
-| Local deployment | Run the API, interface, and PostgreSQL with Docker Compose and persistent volumes. |
+| Deployment | Run locally with Docker Compose, or provision the included GitHub-authenticated Render blueprint. |
 
-The interface contains **Overview**, **Review queue**, **Issue details**, **Try a new issue**, **Model evaluation**, and **About/methodology** views. “Try a new issue” classifies entered text without creating a GitHub issue or storing a new report. A trained artifact is required for that classification request.
+The interface contains **Connect repository**, **Overview**, **Review queue**, **Issue details**, **Try a new issue**, **Model evaluation**, and **About/methodology** views. “Try a new issue” classifies entered text without creating a GitHub issue or storing a new report. A trained artifact is required for that classification request.
 
 ## Example workflow
 
@@ -71,7 +95,8 @@ These actions update TriageDesk's database. A maintainer must make any desired c
 |---|---|
 | Runnable fixture demo | Verified with Docker Compose, migrations, 24 invented issues and health checks |
 | Protected reviews and durable audit | Browser and HTTP saves verified; history/count changes and PostgreSQL restart persistence verified |
-| Automated checks | 46 tests passed, including five PostgreSQL integration tests; lint/format and migration drift checks passed locally |
+| Automated checks | 68 tests passed, including eight PostgreSQL integration tests; legacy functionality and new identity/permission/import flows checked |
+| GitHub authentication | Device and fine-grained-token flows implemented; encrypted credential persistence, expiry/logout, role checks, isolation, and mocked end-to-end imports tested. Live App setup/sign-in remains owner verification. |
 | Real ingestion | 2,999 VS Code issues plus a separate 1,165-issue Streamlit pilot imported; PRs excluded; pilot was rejected for classification |
 | Real classification | 1,123 usable VS Code snapshots; chronological test macro-F1 **0.5446** vs majority **0.2847**; accuracy **0.6923** vs majority **0.7456** |
 | Retrieval | TF-IDF and pinned MiniLM built over 4,164 real issues; self/repository/stale filtering verified; relevance quality pending |
@@ -108,17 +133,17 @@ flowchart TD
 
 ### Online requests and offline jobs
 
-A page request asks the API for stored reports, filtered summaries, a classification, or a related-report ranking. It loads trusted saved artifacts when needed. It does not import GitHub data, fit a vectorizer, train a model, or download model weights.
+Ordinary page requests read scoped reports, summaries, classifications, and related-report rankings using saved artifacts. A verified `POST /connections` request starts a bounded background import/sync, categorization, and indexing job. Progress and results live in PostgreSQL. One database-enforced active job and a renewable lease prevent overlapping web import/index work and allow interrupted work to be retried from committed page checkpoints.
 
-The `triagedesk` command runs explicit administrative jobs for importing, synchronization, dataset preparation, training, evaluation, activation, batch prediction, indexing, and benchmarking. These jobs are not exposed as public HTTP endpoints.
+Model training, dataset preparation, activation, and evaluation remain explicit private CLI jobs. Web requests never train a classifier or download encoder weights. See [hosting](docs/HOSTING.md) for the single-instance runner's limits.
 
 ### Database and audit design
 
-The eight tables are `repositories`, `issues`, `snapshots`, `predictions`, `reviews`, `similarity_judgments`, `experiments`, and `import_runs`.
+The twelve tables are `repositories`, `issues`, `snapshots`, `predictions`, `reviews`, `similarity_judgments`, `experiments`, `import_runs`, `auth_sessions`, `device_logins`, `repository_access`, and `connection_jobs`.
 
 Source labels, model suggestions, and human decisions are stored separately. Snapshots preserve the text and labels used for a decision. Predictions record the snapshot, input hash, model version, scores, and time. Reviews append a decision, note, configured reviewer identity, submission key, and revision.
 
-A conditional database update checks the snapshot and revision shown to a reviewer before saving. Competing decisions cannot silently overwrite each other. An identical transport retry returns its original review. The current authorization model uses a shared installation token; it does not provide individually authenticated user accounts.
+A conditional database update checks the snapshot and revision shown to a reviewer before saving. Competing decisions cannot silently overwrite each other. An identical transport retry returns its original review. Production authorization verifies individual GitHub identities and checks each repository role again before writes. Provider tokens are encrypted at rest, opaque application session tokens are stored only as digests, and production workspaces are scoped to the signed-in account. The shared token remains available only in explicitly selected local mode.
 
 See [architecture](docs/ARCHITECTURE.md) and [design decisions](docs/DECISIONS.md) for details.
 
@@ -128,6 +153,10 @@ See [architecture](docs/ARCHITECTURE.md) and [design decisions](docs/DECISIONS.m
 triagedesk/
 ├── src/triagedesk/
 │   ├── api.py                 # HTTP endpoints, authorization, and errors
+│   ├── authentication.py      # GitHub identity, encryption, sessions, role checks
+│   ├── connection_routes.py   # Sign-in and repository connection endpoints
+│   ├── connections.py         # Leased background import/sync jobs
+│   ├── auto_categories.py     # Trained-model / label / rule suggestions
 │   ├── schemas.py             # Validated request and response types
 │   ├── models.py              # Database tables and constraints
 │   ├── db.py                  # Database engines, sessions, transactions
@@ -147,6 +176,7 @@ triagedesk/
 │   ├── config.py              # Environment-based settings
 │   └── cli.py                 # Administrative command entrypoint
 ├── ui/app.py                  # Streamlit application
+├── ui/account.py              # Sign-in, repository connection, import progress
 ├── tests/                     # Unit, API, and PostgreSQL tests
 ├── alembic/                   # Database migration history
 ├── config/labels.v1.yaml       # Repository-specific category mappings
@@ -194,7 +224,7 @@ Three configurations were compared on validation macro-F1. The selected model us
 
 ### Recorded classification results
 
-Model: **`vscode-tfidf-v1`**.
+Historical trained-model baseline: **`vscode-tfidf-v1`**. These metrics do not evaluate the new source-label/rule fallback, maintainer authentication, or hosted performance.
 
 | Metric on all 169 test reports | Classifier | Majority baseline |
 |---|---:|---:|
@@ -288,7 +318,7 @@ docker compose run --rm api triagedesk predict
 docker compose run --rm api triagedesk index
 ```
 
-These are explicit private CLI jobs, not HTTP tasks. Imports include open/closed issues, follow Link pagination, exclude PR objects, upsert by external ID and commit checkpoints with each persisted page. Limits count REST response objects, including excluded PRs. A ten-minute update-time overlap protects synchronization; a capped corpus stays marked partial. An anonymous rate-limit error preserves committed pages and reports when to retry. Audit sample size is bounded at 100 objects per early/recent cohort. Source deletions are not inferred from a partial traversal; after confirming an inaccessible/deleted source, use `triagedesk mark-unavailable <internal-issue-id>` and rebuild indexes. History remains.
+These are explicit private administrative CLI jobs. Maintainers can instead use the authenticated connection screen for bounded imports, synchronization, categorization, and indexing. Imports include open/closed issues, follow Link pagination, exclude PR objects, upsert by external ID and commit checkpoints with each persisted page. Limits count REST response objects, including excluded PRs. A ten-minute update-time overlap protects synchronization; a capped corpus stays marked partial. An anonymous rate-limit error preserves committed pages and reports when to retry. Audit sample size is bounded at 100 objects per early/recent cohort. Source deletions are not inferred from a partial traversal; after confirming an inaccessible/deleted source, use `triagedesk mark-unavailable <internal-issue-id>` and rebuild indexes. History remains.
 
 Versioned label mapping is in `config/labels.v1.yaml`. VS Code uses `bug`, `feature-request`, and literal `*question`. Conflicts and unsupported labels are excluded from supervision, not forced into a class. All three chronological partitions must support the three categories or training refuses. A new download may differ from the frozen evaluation included here; it needs a new dataset and immutable model version. Do not retune or repartition to improve an existing test headline.
 
@@ -348,7 +378,7 @@ The copied `.env` points to PostgreSQL on localhost:5433. `API_URL` defaults to 
 ```sh
 uv run ruff check src ui tests
 uv run ruff format --check src ui tests alembic
-uv run pytest -q                     # five PG tests skip if TEST_DATABASE_URL is unset
+uv run pytest -q                     # eight PG tests skip if TEST_DATABASE_URL is unset
 docker compose exec db createdb -U triagedesk triagedesk_test  # once; skip if it already exists
 TEST_DATABASE_URL=postgresql+psycopg://triagedesk:triagedesk@localhost:5433/triagedesk_test uv run pytest -q
 uv run alembic check
@@ -357,8 +387,9 @@ API_URL=http://localhost:8000 REVIEWER_TOKEN=local-demo-change-me uv run python 
 
 ### What was tested
 
-The recorded PostgreSQL-enabled local run contains **46 passed tests**, with no failures or skips. Five use actual PostgreSQL; other checks use in-memory SQLite, local components, or mocked external responses where appropriate.
+The updated PostgreSQL-enabled local run contains **68 passed tests**, with no failures or skips. Eight use actual PostgreSQL; other checks use in-memory SQLite, local components, or mocked external responses where appropriate.
 
+- **Identity and access:** encrypted provider credentials, hashed sessions, expiry/logout, numeric GitHub identity, repository isolation, denied roles, revoked write access, device polling, malformed URLs, and concurrent import admission.
 - **Ingestion:** page traversal, PR exclusion, idempotent imports, failed-page rollback, partial collection status, preserved snapshots, API failures, and rate-limit handling.
 - **ML:** label conflicts, unsupported labels, chronological boundaries, exact/near duplicate screening, training-only preprocessing, save/load consistency, and threshold metrics.
 - **API and reviews:** authorization, read-only enforcement, input bounds, filtered aggregates, manual review without a model, history, repeated submissions, and stale forms.
@@ -367,7 +398,7 @@ The recorded PostgreSQL-enabled local run contains **46 passed tests**, with no 
 
 Additional local checks covered an actual browser save, clean Docker startup from the extracted source, review survival after service/container restart, restoration into a new database, and the optional Linux CPU semantic container. Passing these checks establishes the tested software behavior, not model accuracy or user usefulness.
 
-The smoke script intentionally writes only to synthetic mode and refuses real data. Integration tests create isolated schemas in the dedicated test database and remove only their own generated schemas. CI uses a PostgreSQL service, mocked GitHub and no live token/model downloads. Local result: 46 passed; the workflow has not yet run remotely.
+The smoke script intentionally writes only to synthetic mode and refuses real data. Integration tests create isolated schemas in the dedicated test database and remove only their own generated schemas. CI uses a PostgreSQL service, mocked GitHub and no live token/model downloads. Local result: 68 passed; a remote GitHub Actions success must be checked after publication.
 
 ## API and configuration
 
@@ -375,6 +406,10 @@ The smoke script intentionally writes only to synthetic mode and refuses real da
 
 | Method | Endpoint | Purpose |
 |---|---|---|
+| POST | `/auth/token`, `/auth/device/start`, `/auth/device/poll` | GitHub identity verification and sign-in. |
+| GET / POST | `/auth/session`, `/auth/logout` | Inspect or invalidate the current application session. |
+| GET / POST | `/connections` | List own connections or start a verified import/sync job. |
+| GET | `/connections/jobs/{id}` | Inspect own import progress/results. |
 | GET | `/health/live`, `/health/ready` | Process and database readiness checks. |
 | GET | `/meta`, `/repositories` | Mode, configuration summary, and visible source repositories. |
 | GET | `/issues`, `/issues/{id}` | Paginated queue and issue details. |
@@ -389,7 +424,7 @@ The smoke script intentionally writes only to synthetic mode and refuses real da
 
 After startup, open the interactive schema at [http://localhost:8000/docs](http://localhost:8000/docs).
 
-Read-only requests can be explored with:
+In local demo mode, read-only requests can be explored with the examples below. Production data routes additionally require the signed-in application bearer session and an authorized repository filter:
 
 ```sh
 curl http://localhost:8000/health/ready
@@ -401,21 +436,26 @@ Review/judgment requests additionally require an authorization token and the dis
 
 ### Configuration
 
-OpenAPI documents typed inputs/outputs. Queue filters include repository, UTC creation interval, state, literal text search, category source and review status, with bounded pagination/sorting. Review/judgment writes require the backend’s Bearer token and a unique submission key. A stale issue/review returns 409; refresh and reconsider. Do not blindly retry with a changed revision.
+OpenAPI documents typed inputs/outputs. Queue filters include repository, UTC creation interval, state, literal text search, category source and review status, with bounded pagination/sorting. Production review/judgment writes require an individual GitHub-backed application session, current repository maintainer access, and a unique submission key. Local demo mode uses its configured shared token. A stale issue/review returns 409; refresh and reconsider. Do not blindly retry with a changed revision.
 
 | Variable | Purpose |
 |---|---|
 | `DATABASE_URL` | SQLAlchemy PostgreSQL URL; common provider postgres/postgresql URLs normalize to psycopg |
 | `MODE` | `fixture` or `real`; data/metric boundary |
 | `ARTIFACT_DIR` | Persistent trusted model/index/cache directory |
-| `READ_ONLY` | Backend write lock; default true in application/cloud configuration |
-| `REVIEWER_TOKEN`, `REVIEWER_NAME` | Shared reviewer secret and configured audit identity |
+| `READ_ONLY` | Backend import/review write lock; application default true; verified production blueprint explicitly enables writes |
+| `AUTH_MODE` | `local` demo or `github` individual maintainer authentication |
+| `AUTH_ENCRYPTION_KEY` | Random secret of at least 32 characters for encrypted provider credentials |
+| `GITHUB_CLIENT_ID` | Optional GitHub App Client ID enabling browser/device sign-in |
+| `ALLOW_TOKEN_LOGIN` | Enable fine-grained GitHub token sign-in |
+| `SESSION_HOURS` | Expiring application sessions, 1–24 hours; default 8 |
+| `REVIEWER_TOKEN`, `REVIEWER_NAME` | Explicit local-demo mode only; ignored for production GitHub identities |
 | `GITHUB_TOKEN` | Optional, read-only public ingestion authorization; never sent to the interface |
 | `API_URL` | Streamlit’s backend URL |
 | `DB_PORT`, `API_PORT`, `UI_PORT` | Optional host port overrides; container ports remain fixed |
 | `EMBEDDING_MODEL`, `EMBEDDING_REVISION` | Pinned optional encoder settings; changing them requires rebuilding the index/cache |
 
-Issue bodies and review notes render as safe text; custom HTML contains only the static stylesheet. SQL is parameterized. Repository identifiers cannot be arbitrary fetch URLs. Credentials are excluded from images/repositories and application logs. This MVP does not implement enterprise identity, multitenancy, automatic retraining, an LLM, a vector database, or a second campus-feedback app.
+Issue bodies and review notes render as safe text; custom HTML contains only the static stylesheet. SQL is parameterized. Repository identifiers cannot be arbitrary fetch URLs. Credentials are excluded from images/repositories and application logs. This MVP supports individual GitHub sessions and scoped connected workspaces. It does not implement enterprise SSO, private repositories, automatic retraining, an LLM, a vector database, or persistent browser-login cookies.
 
 ## Troubleshooting
 
@@ -425,10 +465,10 @@ Issue bodies and review notes render as safe text; custom HTML contains only the
 | The application ports are already in use | Stop the previous project or set unused `DB_PORT`, `API_PORT`, and `UI_PORT` values in `.env`, then restart. |
 | Classifier unavailable in the fixture demo | Expected: fixture suggestions are illustrative. Restore the real bundle or train and activate a real model. |
 | Semantic search is unavailable | The base image intentionally uses TF-IDF. Install optional semantic dependencies and build the pinned index to enable MiniLM. |
-| Review save is rejected | Check the local reviewer token and `READ_ONLY`; refresh if the snapshot/revision changed. |
+| Review save is rejected | In production, check GitHub identity, repository role, and `READ_ONLY`; in local mode, check the reviewer token. Refresh stale snapshots/revisions. |
 | Import hits a GitHub rate limit | Keep the committed progress, wait until the reported reset, and retry. An optional token may increase the quota. |
 | Training refuses a dataset | Each chronological partition must support all three categories. Collect suitable data rather than moving held-out reports into training. |
-| Five tests skip | Set `TEST_DATABASE_URL` to a dedicated PostgreSQL test database to run the integration checks. |
+| Eight tests skip | Set `TEST_DATABASE_URL` to a dedicated PostgreSQL test database to run the integration checks. |
 | Restore helper refuses an existing database | It intentionally avoids overwriting tables. Reuse the already restored app, or choose a new evidence project and unused ports. |
 
 Inspect `docker compose ps` and `docker compose logs api ui` for startup problems. Plain `docker compose down` preserves volumes. Do not add `--volumes` unless you intend to delete stored application data.
@@ -456,6 +496,7 @@ Use a focused branch, keep generated data and secrets out of commits, and run th
 
 ## Documentation and limits
 
+- [Online hosting and verified GitHub connections](docs/HOSTING.md)
 - [GitHub upload instructions](docs/GITHUB_UPLOAD.md)
 - [Product brief and acceptance criteria](docs/PRODUCT_BRIEF.md)
 - [Architecture and Mermaid diagram](docs/ARCHITECTURE.md), [decisions](docs/DECISIONS.md)

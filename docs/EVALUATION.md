@@ -79,3 +79,12 @@ Use README commands to import, freeze, train/evaluate and benchmark. Exact sourc
 ## Limits of the evidence
 
 The main result is a **chronological retrospective evaluation using collected snapshots**. Text and labels may have changed after creation; historical training-label availability is not established. The import is a biased oldest-update-time slice of an old project period. Labels are noisy, model scores are uncalibrated, and cross-project/current-data performance is unknown. Retrieval quality, actual hosted availability, intended-user usability and feedback-driven improvement remain pending.
+
+
+## Version 0.2 authentication and repository connection verification
+
+The new GitHub-backed session, repository-role, scoped-workspace, import-job, and UI flows are tested separately from the historical classifier above. The current suite has 68 passing tests including eight PostgreSQL integration tests; see `evidence/hosted-upgrade-tests.xml`. Identity and permission responses are mocked in automated tests. Real hosted OAuth and owner-account verification remain pending owner setup.
+
+An additional read-only live API check fetched 50 VS Code response objects into an isolated database: 49 issues persisted and one PR was excluded. Source-label/text-rule suggestions categorized 33 reports (11 bug, 19 enhancement, 3 question); 16 remained for manual categorization. This is a functionality check, not an accuracy assessment. Twenty-three suggestions came from GitHub labels and ten from text rules, with no fabricated probability scores. Related search returned five candidates and excluded self. See `evidence/live-public-import-v02.json`.
+
+The current production blueprint was validated against Render's official schema. The new local installation serves the sign-in screen and rejects unauthenticated workspace data requests. No cloud URL, user time saving, rule accuracy, or genuine relevance judgment is claimed.

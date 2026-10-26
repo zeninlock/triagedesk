@@ -1,3 +1,11 @@
+# Verified-maintainer update
+
+Implemented GitHub App device sign-in, fine-grained token identity verification, encrypted backend credentials, expiring/revocable application sessions, per-repository role checks, scoped workspaces, a dashboard connection form, observable bounded import/sync jobs, source-label/rule fallback categorization, and the production Render blueprint. Current automated local run: 68 passing tests including eight PostgreSQL integration cases. See `evidence/hosted-upgrade-tests.xml` after verification and [HOSTING.md](HOSTING.md) for setup.
+
+Owner actions remain: publish the updated source, provision Render resources, register/install an optional GitHub App and add its client ID (or use fine-grained token sign-in), and verify a real maintainer session against the hosted URL. Human retrieval judgments and a maintainer usability study also remain pending. No live OAuth or cloud-deployment success is claimed.
+
+---
+
 # Milestones and handoff — 26 October 2026
 
 ## 1. Runnable foundation — locally verified

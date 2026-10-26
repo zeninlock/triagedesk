@@ -87,6 +87,8 @@ class RepositoryOut(BaseModel):
 
 
 class PredictionOut(BaseModel):
+    method: str = "trained_model"
+    explanation: str = ""
     id: int
     category: Category
     scores: dict[str, float]
@@ -114,6 +116,7 @@ class IssueSummary(BaseModel):
     max_score: float | None
     needs_review: bool | None
     model_version: str | None
+    prediction_method: str | None = None
     review_status: Literal["awaiting", "reviewed", "deferred", "skipped"]
     review_complete: bool
 

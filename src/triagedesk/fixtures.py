@@ -180,6 +180,7 @@ def seed(session):
                 }
                 session.add(
                     Prediction(
+                        method="illustrative",
                         issue_id=issue.id,
                         snapshot_id=issue.snapshot_id,
                         category=predicted,

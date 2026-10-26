@@ -8,6 +8,7 @@ from datetime import datetime, time, timedelta, timezone
 import httpx
 import pandas as pd
 import streamlit as st
+from account import connections_page, sign_in
 
 st.set_page_config(page_title="TriageDesk", page_icon="▦", layout="wide")
 st.markdown(
@@ -26,7 +27,9 @@ BASE = os.getenv("API_URL", "http://localhost:8000").rstrip("/")
 
 def api(path, method="GET", payload=None, params=None, quiet=False):
     headers = {}
-    token = st.session_state.get("reviewer_access", "")
+    token = st.session_state.get("github_session", {}).get("access_token") or st.session_state.get(
+        "reviewer_access", ""
+    )
     if token:
         headers["Authorization"] = f"Bearer {token}"
     try:
@@ -38,6 +41,8 @@ def api(path, method="GET", payload=None, params=None, quiet=False):
             message = response.json()["error"]["message"]
         except (ValueError, KeyError, TypeError):
             message = "The service could not complete this request"
+        if response.status_code == 401 and st.session_state.get("github_session"):
+            st.session_state.pop("github_session", None)
         if response.status_code == 409:
             st.warning(f"{message}. Refresh this page before saving again.")
         elif not quiet:
@@ -58,6 +63,15 @@ def key_for(payload):
 def select_issue(issue_id):
     st.session_state["selected_issue"] = issue_id
     st.session_state["navigation"] = "Issue details"
+
+
+def method_text(value):
+    return {
+        "trained_model": "trained model",
+        "source_label": "GitHub label",
+        "rules": "text rules",
+        "illustrative": "synthetic example",
+    }.get(value, "suggestion")
 
 
 def score_text(value):
@@ -95,27 +109,48 @@ def show_related(data, issue=None, enabled=False):
 meta = api("/meta")
 if not meta:
     st.stop()
+github_auth = meta.get("auth_mode") == "github"
+account = None
+if github_auth:
+    if not st.session_state.get("github_session"):
+        sign_in(meta, api)
+        st.stop()
+    account = api("/auth/session", quiet=True)
+    if not account:
+        st.session_state.pop("github_session", None)
+        st.rerun()
 repos = api("/repositories")
 if repos is None:
     st.stop()
 with st.sidebar:
     st.title("▦ TriageDesk")
     st.caption("A clearer queue. A human decision.")
+    if github_auth:
+        st.caption(f"Signed in as @{account['login']}")
+        if st.button("Sign out"):
+            api("/auth/logout", "POST")
+            st.session_state.clear()
+            st.rerun()
     page = st.radio(
         "Workspace",
-        [
+        (["Connect repository"] if github_auth else [])
+        + [
             "Overview",
             "Review queue",
             "Issue details",
             "Try a new issue",
             "Model evaluation",
             "About & methodology",
-        ],
+        ]
+        + ([] if github_auth else ["Connect repository"]),
         key="navigation",
     )
     st.divider()
     repo_names = {r["full_name"]: r["id"] for r in repos}
-    repo_choice = st.selectbox("Repository", ["All imported repositories", *repo_names])
+    repo_options = list(repo_names) if github_auth else ["All imported repositories", *repo_names]
+    repo_choice = st.selectbox(
+        "Repository", repo_options or ["Connect a repository first"], disabled=not repo_options
+    )
     state = st.selectbox("Source state", ["All", "open", "closed"])
     category = st.selectbox("Category", ["All", "bug", "enhancement", "question"])
     cat_source = st.selectbox(
@@ -126,14 +161,14 @@ with st.sidebar:
     review_status = st.selectbox("Review status", ["All", "awaiting", "reviewed", "deferred", "skipped"])
     date_range = st.date_input("Created date range (optional)", value=[])
     st.divider()
-    if meta["writes_enabled"]:
+    if meta["writes_enabled"] and not github_auth:
         st.text_input(
             "Reviewer access token",
             type="password",
             key="reviewer_access",
             help="Set by the installation owner. The API independently checks every write.",
         )
-    else:
+    elif not meta["writes_enabled"]:
         st.caption("Read-only exploration. Reviewer writes are disabled by the server.")
     if st.button("Refresh data"):
         st.rerun()
@@ -148,7 +183,12 @@ if len(date_range) == 2:
     filters["created_before"] = datetime.combine(
         date_range[1] + timedelta(days=1), time.min, timezone.utc
     ).isoformat()
-can_write = meta["writes_enabled"] and bool(st.session_state.get("reviewer_access"))
+can_write = meta["writes_enabled"] and bool(
+    st.session_state.get("github_session") if github_auth else st.session_state.get("reviewer_access")
+)
+if github_auth and not repos and page != "Connect repository":
+    st.info("Connect a public repository from the Connect repository page first.")
+    st.stop()
 if meta["mode"] == "fixture":
     st.info(
         "SYNTHETIC DEMO · 24 invented issues and illustrative scores. These are excluded from all reported model evaluation."
@@ -160,7 +200,9 @@ else:
 if st.session_state.pop("flash", None):
     st.success("Review saved. The queue and dashboard now use the latest decision.")
 
-if page == "Overview":
+if page == "Connect repository":
+    connections_page(meta, api)
+elif page == "Overview":
     st.title("Make room for the next decision")
     st.write("Review incoming reports, find recurring concerns, and keep the maintainer in control.")
     data = api("/dashboard", params=filters)
@@ -171,7 +213,7 @@ if page == "Overview":
             [
                 ("Imported issues", data["imported"]),
                 ("Awaiting review", data["awaiting_review"]),
-                ("Low score", data["low_score"]),
+                ("Needs extra review", data["low_score"]),
                 ("Review completion", f"{data['review_completion_rate']:.0%}"),
             ],
         ):
@@ -187,7 +229,7 @@ if page == "Overview":
                 st.info("No issues match these filters.")
         with right:
             st.subheader("Category signals")
-            tabs = st.tabs(["Model suggestions", "Human decisions"])
+            tabs = st.tabs(["Category suggestions", "Human decisions"])
             for tab, field in zip(tabs, ["predicted_categories", "reviewed_categories"]):
                 with tab:
                     st.bar_chart(pd.DataFrame({"issues": data[field]}), color="#0c9c87")
@@ -201,7 +243,7 @@ if page == "Overview":
             st.info("No reviews in this filtered view. Open the review queue to make the first decision.")
         with st.expander("Metric definitions"):
             st.write(
-                "Awaiting review includes issues with no decision, deferred issues, and skipped issues. Completion requires the latest decision on the current snapshot to be accept or correct. Low score counts current predictions whose saved score is below that model’s validation-selected threshold. Missing predictions are awaiting review but are not counted as low score."
+                "Awaiting review includes issues with no decision, deferred issues, and skipped issues. Completion requires the latest decision on the current snapshot to be accept or correct. Needs extra review includes low-scoring model predictions and unscored source-label/rule suggestions. Missing predictions are awaiting review but are not counted as low score."
             )
 
 elif page == "Review queue":
@@ -218,14 +260,14 @@ elif page == "Review queue":
         st.caption(f"{data['total']} matching issues · 10 per page")
         if not data["items"]:
             st.info(
-                "No issues on this page. Change the filters, return to page 1, or import data with the CLI."
+                "No issues on this page. Change the filters, return to page 1, or connect a repository from the Connect repository page."
             )
         for item in data["items"]:
             with st.container(border=True):
                 a, b = st.columns([5, 1])
                 a.write(f"#{item['number']} · {item['title']}")
                 a.caption(
-                    f"{item['predicted_category'] or 'No suggestion'} · score {score_text(item['max_score'])} · {item['review_status']} · created {item['created_at'][:10]} · {item['state']}"
+                    f"{item['predicted_category'] or 'No suggestion'} · {('score ' + score_text(item['max_score'])) if item.get('prediction_method') in {'trained_model', 'illustrative', None} else 'unscored · ' + method_text(item['prediction_method'])} · {item['review_status']} · created {item['created_at'][:10]} · {item['state']}"
                 )
                 b.button("Inspect issue", key=f"open-{item['id']}", on_click=select_issue, args=(item["id"],))
 
@@ -260,20 +302,30 @@ elif page == "Issue details":
                 st.subheader("Category suggestion")
                 if p:
                     st.write(p["category"].capitalize())
-                    st.dataframe(
-                        pd.DataFrame([{"category": k, "model score": v} for k, v in p["scores"].items()]),
-                        hide_index=True,
-                    )
+                    st.caption(p.get("explanation") or "Inspect this suggestion before deciding.")
+                    if p["scores"]:
+                        st.dataframe(
+                            pd.DataFrame([{"category": k, "model score": v} for k, v in p["scores"].items()]),
+                            hide_index=True,
+                        )
+                        st.caption("Scores are not calibrated probabilities.")
+                    else:
+                        st.caption(
+                            "Unscored suggestion from "
+                            + method_text(p.get("method", "rules"))
+                            + "; no ML probability is claimed."
+                        )
                     if p["needs_review"]:
-                        st.warning("Low score · this suggestion needs extra attention.")
-                    st.caption("Scores are not calibrated probabilities. Human review is always available.")
+                        st.warning("This suggestion needs human review.")
                     with st.expander("Prediction provenance"):
                         st.json({k: p[k] for k in ["model_version", "created_at", "input_hash"]})
                 else:
                     st.info("No prediction for this snapshot. You can categorize it manually.")
                 if not can_write:
                     st.caption(
-                        "Enter the reviewer token in the sidebar to save, if this server permits writes."
+                        "Sign in with repository maintainer access to save."
+                        if github_auth
+                        else "Enter the reviewer token in the sidebar to save, if this server permits writes."
                     )
                 with st.form(f"review-{selected}-{issue['review_revision']}"):
                     actions = ["accept", "correct", "defer", "skip"] if p else ["correct", "defer", "skip"]
@@ -329,7 +381,11 @@ elif page == "Try a new issue":
             st.warning("Add a title first.")
         else:
             with st.spinner("Finding suggestions…"):
-                result = api("/classify", "POST", {"title": title, "body": body})
+                result = api(
+                    "/classify",
+                    "POST",
+                    {"title": title, "body": body, "repository_id": filters.get("repository_id")},
+                )
                 if result and result["available"]:
                     st.write(f"Suggested category: {result['category']} · score {result['max_score']:.2f}")
                     st.caption(result["score_meaning"])

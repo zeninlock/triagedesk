@@ -50,6 +50,7 @@ def issue_scope(filters: IssueFilters, mode: str):
             p.max_score,
             p.needs_review,
             p.model_version,
+            p.method.label("prediction_method"),
             r.category.label("reviewed_category"),
             status.label("review_status"),
             reviewed.label("review_complete"),
