@@ -1,0 +1,31 @@
+version: labels-v1
+conflicts: exclude_from_supervision
+repositories:
+  fastapi/fastapi:
+    bug: [bug]
+    enhancement: [enhancement, feature]
+    question: [question]
+  streamlit/streamlit:
+    bug: [type:bug, bug]
+    enhancement: [type:enhancement, enhancement]
+    question: [type:question, question]
+  pallets/flask:
+    bug: [bug]
+    enhancement: [enhancement, feature]
+    question: [question]
+  textualize/rich:
+    bug: [bug]
+    enhancement: [enhancement]
+    question: [question]
+  jupyter-widgets/ipywidgets:
+    bug: [bug]
+    enhancement: [enhancement]
+    question: [question]
+  microsoft/vscode:
+    bug: [bug]
+    enhancement: [feature-request]
+    question: ['*question']
+  synthetic/campus-tools:
+    bug: [bug]
+    enhancement: [enhancement]
+    question: [question]

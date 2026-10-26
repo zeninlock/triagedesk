@@ -1,0 +1,39 @@
+# Local dependencies and generated Python files
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+
+# Test and editor caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.DS_Store
+
+# Local settings; commit demonstration templates only
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Generated datasets, models, databases, and logs
+artifacts/
+data/
+*.joblib
+*.pkl
+*.pickle
+*.pt
+*.pth
+*.safetensors
+*.db
+*.db-*
+*.dump
+*.dump.*
+*.log
+
+# Separately distributed runtime bundle and source packages
+triagedesk-real-data*.tar.gz
+triagedesk*.zip

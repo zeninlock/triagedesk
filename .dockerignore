@@ -1,0 +1,15 @@
+.venv
+.git
+.env
+.env.*
+!.env.example
+artifacts
+data
+__pycache__
+.pytest_cache
+.ruff_cache
+*.db
+*.dump
+.DS_Store
+triagedesk-real-data*.tar.gz
+triagedesk*.zip

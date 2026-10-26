@@ -1,0 +1,9 @@
+{
+  "out": "../../work/runtime/retrieval-pool.json",
+  "actual_queries": 39,
+  "methods": [
+    "semantic",
+    "tfidf"
+  ],
+  "status": "Pending genuine human relevance judgments; no retrieval quality score computed"
+}

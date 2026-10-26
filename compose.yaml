@@ -1,0 +1,65 @@
+x-backend: &backend
+  build: .
+  image: triagedesk:local
+  env_file: .env
+  environment: &backend-env
+    DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-triagedesk}:${POSTGRES_PASSWORD:-triagedesk}@db:5432/${POSTGRES_DB:-triagedesk}
+    ARTIFACT_DIR: /app/artifacts
+    MODE: ${MODE:-fixture}
+    READ_ONLY: ${READ_ONLY:-true}
+  volumes:
+    - artifacts:/app/artifacts
+    - datasets:/app/data
+
+services:
+  db:
+    image: postgres:17-bookworm@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-triagedesk}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-triagedesk}
+      POSTGRES_DB: ${POSTGRES_DB:-triagedesk}
+    ports: ["127.0.0.1:${DB_PORT:-5433}:5432"]
+    volumes: ["postgres_data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  migrate:
+    <<: *backend
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      db: {condition: service_healthy}
+  seed:
+    <<: *backend
+    command: ["triagedesk", "demo-init"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+  api:
+    <<: *backend
+    ports: ["127.0.0.1:${API_PORT:-8000}:8000"]
+    depends_on:
+      seed: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+  ui:
+    build: .
+    image: triagedesk:local
+    environment:
+      API_URL: http://api:8000
+    command: ["streamlit", "run", "ui/app.py", "--server.address=0.0.0.0", "--server.port=8501"]
+    ports: ["127.0.0.1:${UI_PORT:-8501}:8501"]
+    depends_on:
+      api: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+volumes:
+  postgres_data:
+  artifacts:
+  datasets:

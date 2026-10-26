@@ -1,0 +1,465 @@
+{
+  "model_version": "vscode-tfidf-v1",
+  "dataset_version": "dataset-66cb4613b0925284",
+  "repository": "microsoft/vscode",
+  "synthetic": false,
+  "seed": 42,
+  "dependencies": {
+    "scikit-learn": "1.9.1",
+    "numpy": "2.5.4",
+    "scipy": "1.18.1",
+    "joblib": "1.6.0",
+    "fastapi": "0.162.0",
+    "sqlalchemy": "2.0.55",
+    "streamlit": "1.66.1"
+  },
+  "python": "3.12.0",
+  "config": {
+    "ngram_range": [
+      1,
+      1
+    ],
+    "max_features": 20000,
+    "min_df": 1,
+    "C": 1.0,
+    "class_weight": "balanced"
+  },
+  "validation_search": [
+    {
+      "config": {
+        "ngram_range": [
+          1,
+          2
+        ],
+        "max_features": 30000,
+        "min_df": 2,
+        "C": 1.0,
+        "class_weight": null
+      },
+      "macro_f1": 0.47486413043478254
+    },
+    {
+      "config": {
+        "ngram_range": [
+          1,
+          2
+        ],
+        "max_features": 30000,
+        "min_df": 2,
+        "C": 2.0,
+        "class_weight": "balanced"
+      },
+      "macro_f1": 0.5236516784342872
+    },
+    {
+      "config": {
+        "ngram_range": [
+          1,
+          1
+        ],
+        "max_features": 20000,
+        "min_df": 1,
+        "C": 1.0,
+        "class_weight": "balanced"
+      },
+      "macro_f1": 0.5522301347989421
+    }
+  ],
+  "threshold": 0.55,
+  "threshold_selection": {
+    "policy": "Maximize validation coverage with accuracy>=0.85 and >=10 unflagged; otherwise maximize accuracy*sqrt(coverage)",
+    "candidates": [
+      {
+        "threshold": 0.35,
+        "coverage": 1.0,
+        "unflagged_support": 168,
+        "unflagged_accuracy": 0.6845238095238095
+      },
+      {
+        "threshold": 0.4,
+        "coverage": 0.8630952380952381,
+        "unflagged_support": 145,
+        "unflagged_accuracy": 0.7448275862068966
+      },
+      {
+        "threshold": 0.45,
+        "coverage": 0.6904761904761905,
+        "unflagged_support": 116,
+        "unflagged_accuracy": 0.7758620689655172
+      },
+      {
+        "threshold": 0.5,
+        "coverage": 0.5476190476190477,
+        "unflagged_support": 92,
+        "unflagged_accuracy": 0.8369565217391305
+      },
+      {
+        "threshold": 0.55,
+        "coverage": 0.44642857142857145,
+        "unflagged_support": 75,
+        "unflagged_accuracy": 0.8533333333333334
+      },
+      {
+        "threshold": 0.6,
+        "coverage": 0.24404761904761904,
+        "unflagged_support": 41,
+        "unflagged_accuracy": 0.926829268292683
+      },
+      {
+        "threshold": 0.65,
+        "coverage": 0.1488095238095238,
+        "unflagged_support": 25,
+        "unflagged_accuracy": 0.96
+      },
+      {
+        "threshold": 0.7,
+        "coverage": 0.09523809523809523,
+        "unflagged_support": 16,
+        "unflagged_accuracy": 1.0
+      },
+      {
+        "threshold": 0.75,
+        "coverage": 0.05357142857142857,
+        "unflagged_support": 9,
+        "unflagged_accuracy": 1.0
+      },
+      {
+        "threshold": 0.8,
+        "coverage": 0.005952380952380952,
+        "unflagged_support": 1,
+        "unflagged_accuracy": 1.0
+      },
+      {
+        "threshold": 0.85,
+        "coverage": 0.0,
+        "unflagged_support": 0,
+        "unflagged_accuracy": 0.0
+      },
+      {
+        "threshold": 0.9,
+        "coverage": 0.0,
+        "unflagged_support": 0,
+        "unflagged_accuracy": 0.0
+      },
+      {
+        "threshold": 0.95,
+        "coverage": 0.0,
+        "unflagged_support": 0,
+        "unflagged_accuracy": 0.0
+      }
+    ],
+    "target_met": true
+  },
+  "splits": {
+    "train": {
+      "start": "2015-11-16T10:43:28+00:00",
+      "end": "2017-08-30T17:25:40+00:00",
+      "before_deduplication": 786,
+      "after_deduplication": 786,
+      "class_support": {
+        "bug": 430,
+        "enhancement": 267,
+        "question": 89
+      }
+    },
+    "validation": {
+      "start": "2017-08-30T21:13:38+00:00",
+      "end": "2017-09-19T23:48:16+00:00",
+      "before_deduplication": 168,
+      "after_deduplication": 168,
+      "class_support": {
+        "bug": 110,
+        "enhancement": 24,
+        "question": 34
+      }
+    },
+    "test": {
+      "start": "2017-09-20T03:57:28+00:00",
+      "end": "2017-10-03T12:55:34+00:00",
+      "before_deduplication": 169,
+      "after_deduplication": 169,
+      "class_support": {
+        "enhancement": 14,
+        "bug": 126,
+        "question": 29
+      }
+    }
+  },
+  "validation": {
+    "macro_f1": 0.5522301347989421,
+    "accuracy": 0.6845238095238095,
+    "support": 168,
+    "per_class": {
+      "bug": {
+        "precision": 0.8333333333333334,
+        "recall": 0.8181818181818182,
+        "f1-score": 0.8256880733944955,
+        "support": 110.0
+      },
+      "enhancement": {
+        "precision": 0.38095238095238093,
+        "recall": 0.6666666666666666,
+        "f1-score": 0.48484848484848486,
+        "support": 24.0
+      },
+      "question": {
+        "precision": 0.5,
+        "recall": 0.2647058823529412,
+        "f1-score": 0.34615384615384615,
+        "support": 34.0
+      }
+    },
+    "confusion_matrix": [
+      [
+        90,
+        14,
+        6
+      ],
+      [
+        5,
+        16,
+        3
+      ],
+      [
+        13,
+        12,
+        9
+      ]
+    ],
+    "review_flagged_fraction": 0.5535714285714286,
+    "unflagged_support": 75,
+    "unflagged_accuracy": 0.8533333333333334,
+    "unflagged_macro_f1": 0.6166925953219247
+  },
+  "test": {
+    "macro_f1": 0.5445796426272719,
+    "accuracy": 0.6923076923076923,
+    "support": 169,
+    "per_class": {
+      "bug": {
+        "precision": 0.8738738738738738,
+        "recall": 0.7698412698412699,
+        "f1-score": 0.8185654008438819,
+        "support": 126.0
+      },
+      "enhancement": {
+        "precision": 0.2222222222222222,
+        "recall": 0.7142857142857143,
+        "f1-score": 0.3389830508474576,
+        "support": 14.0
+      },
+      "question": {
+        "precision": 0.7692307692307693,
+        "recall": 0.3448275862068966,
+        "f1-score": 0.47619047619047616,
+        "support": 29.0
+      }
+    },
+    "confusion_matrix": [
+      [
+        97,
+        27,
+        2
+      ],
+      [
+        3,
+        10,
+        1
+      ],
+      [
+        11,
+        8,
+        10
+      ]
+    ],
+    "review_flagged_fraction": 0.5502958579881657,
+    "unflagged_support": 76,
+    "unflagged_accuracy": 0.881578947368421,
+    "unflagged_macro_f1": 0.6922507517927365
+  },
+  "baseline_test": {
+    "macro_f1": 0.2847457627118644,
+    "accuracy": 0.7455621301775148,
+    "support": 169,
+    "per_class": {
+      "bug": {
+        "precision": 0.7455621301775148,
+        "recall": 1.0,
+        "f1-score": 0.8542372881355932,
+        "support": 126.0
+      },
+      "enhancement": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1-score": 0.0,
+        "support": 14.0
+      },
+      "question": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1-score": 0.0,
+        "support": 29.0
+      }
+    },
+    "confusion_matrix": [
+      [
+        126,
+        0,
+        0
+      ],
+      [
+        14,
+        0,
+        0
+      ],
+      [
+        29,
+        0,
+        0
+      ]
+    ]
+  },
+  "exclusions": {
+    "imported_available": 2999,
+    "eligible": 1123,
+    "unsupported_or_unlabeled": 1872,
+    "conflicting": 4,
+    "eligible_before_deduplication": 1123,
+    "duplicates_excluded": 0,
+    "eligible_after_deduplication": 1123,
+    "explicit_type_fields_removed": 0
+  },
+  "errors": [
+    {
+      "issue_id": 1830,
+      "number": 34678,
+      "title": "Settings button does not support touch",
+      "source_url": "https://github.com/microsoft/vscode/issues/34678",
+      "actual": "bug",
+      "predicted": "enhancement",
+      "score": 0.4704628256692689,
+      "text_characters": 163
+    },
+    {
+      "issue_id": 2549,
+      "number": 34688,
+      "title": "How to show icon button in editor menu bar?",
+      "source_url": "https://github.com/microsoft/vscode/issues/34688",
+      "actual": "question",
+      "predicted": "enhancement",
+      "score": 0.42595203909870083,
+      "text_characters": 719
+    },
+    {
+      "issue_id": 2470,
+      "number": 34705,
+      "title": "Allow user to create Tasks with the Windows 'Jump List' functionality",
+      "source_url": "https://github.com/microsoft/vscode/issues/34705",
+      "actual": "bug",
+      "predicted": "enhancement",
+      "score": 0.6558454332671503,
+      "text_characters": 959
+    },
+    {
+      "issue_id": 2442,
+      "number": 34718,
+      "title": "Display unique directory label for quickopen files",
+      "source_url": "https://github.com/microsoft/vscode/issues/34718",
+      "actual": "enhancement",
+      "predicted": "bug",
+      "score": 0.5683794632890072,
+      "text_characters": 1544
+    },
+    {
+      "issue_id": 2099,
+      "number": 34722,
+      "title": "Occurrences highlighting gets removed after switching documents",
+      "source_url": "https://github.com/microsoft/vscode/issues/34722",
+      "actual": "bug",
+      "predicted": "question",
+      "score": 0.4458245354703113,
+      "text_characters": 499
+    },
+    {
+      "issue_id": 2465,
+      "number": 34755,
+      "title": "Disable peek editor and just open the file directly when there are multiple definitions",
+      "source_url": "https://github.com/microsoft/vscode/issues/34755",
+      "actual": "question",
+      "predicted": "enhancement",
+      "score": 0.39334178739208503,
+      "text_characters": 783
+    },
+    {
+      "issue_id": 1875,
+      "number": 34759,
+      "title": "[Feature Request] Allow bold-face for language keywords",
+      "source_url": "https://github.com/microsoft/vscode/issues/34759",
+      "actual": "question",
+      "predicted": "enhancement",
+      "score": 0.5328735762937464,
+      "text_characters": 670
+    },
+    {
+      "issue_id": 2013,
+      "number": 34768,
+      "title": "ExplorerView#getActiveFile only uses file-uris",
+      "source_url": "https://github.com/microsoft/vscode/issues/34768",
+      "actual": "bug",
+      "predicted": "enhancement",
+      "score": 0.4400027197133022,
+      "text_characters": 317
+    },
+    {
+      "issue_id": 1708,
+      "number": 34869,
+      "title": "Multi-Cursor Modifier is not working with the Ctrl-key (but with Alt-Key)",
+      "source_url": "https://github.com/microsoft/vscode/issues/34869",
+      "actual": "question",
+      "predicted": "bug",
+      "score": 0.5324008145959711,
+      "text_characters": 749
+    },
+    {
+      "issue_id": 2169,
+      "number": 35153,
+      "title": "accessibility: allow me to jump quickly to various debugger treeviews",
+      "source_url": "https://github.com/microsoft/vscode/issues/35153",
+      "actual": "enhancement",
+      "predicted": "question",
+      "score": 0.40310323911501716,
+      "text_characters": 791
+    },
+    {
+      "issue_id": 1686,
+      "number": 35207,
+      "title": "Open Folder always use existing window",
+      "source_url": "https://github.com/microsoft/vscode/issues/35207",
+      "actual": "enhancement",
+      "predicted": "bug",
+      "score": 0.38387997402934204,
+      "text_characters": 1077
+    },
+    {
+      "issue_id": 1377,
+      "number": 35304,
+      "title": "New icons in stable",
+      "source_url": "https://github.com/microsoft/vscode/issues/35304",
+      "actual": "enhancement",
+      "predicted": "bug",
+      "score": 0.5450225440955104,
+      "text_characters": 1661
+    }
+  ],
+  "template_sensitivity": {
+    "explicit_template_test_count": 0,
+    "without_explicit_template_count": 169,
+    "without_explicit_template_macro_f1": 0.5445796426272719
+  },
+  "limitations": [
+    "Chronological retrospective evaluation using collected snapshots. Historical issue text and labels may have been edited or assigned after creation; training-label availability at the cutoff is not established.",
+    "Scores have not been calibrated; label noise is not ground-truth quality",
+    "One repository and one collection; no cross-project performance claim",
+    "Held-out issues remain protected from future review-derived training exports"
+  ]
+}

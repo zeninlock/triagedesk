@@ -1,0 +1,1 @@
+{"status": "passed", "platform": "Linux Docker arm64", "torch": "2.14.1+cpu", "uid": 10001, "classification_model": "vscode-tfidf-v1", "semantic_candidates": 5, "artifact_mount": "read-only"}

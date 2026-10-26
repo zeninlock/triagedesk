@@ -1,0 +1,7 @@
+{
+  "checked_at": "2026-10-26T00:19:01.588602+00:00",
+  "status": "passed",
+  "source": "Clean extraction of source ZIP, copied env example, fresh PostgreSQL and artifact volumes, locked Docker build",
+  "synthetic_issues": 24,
+  "model_metrics_not_fabricated": true
+}

@@ -1,0 +1,26 @@
+[
+  {
+    "repository": "fastapi/fastapi",
+    "current_label_issue_counts": {
+      "bug": 121,
+      "enhancement": 0,
+      "question": 3125
+    }
+  },
+  {
+    "repository": "streamlit/streamlit",
+    "current_label_issue_counts": {
+      "type:bug": 3090,
+      "type:enhancement": 2494,
+      "type:question": 35
+    }
+  },
+  {
+    "repository": "pallets/flask",
+    "current_label_issue_counts": {
+      "bug": 36,
+      "enhancement": 0,
+      "question": 0
+    }
+  }
+]

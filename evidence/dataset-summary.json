@@ -1,0 +1,54 @@
+{
+  "version": "dataset-66cb4613b0925284",
+  "repository": "microsoft/vscode",
+  "counts": {
+    "imported_available": 2999,
+    "eligible": 1123,
+    "unsupported_or_unlabeled": 1872,
+    "conflicting": 4,
+    "eligible_before_deduplication": 1123,
+    "duplicates_excluded": 0,
+    "eligible_after_deduplication": 1123,
+    "explicit_type_fields_removed": 0
+  },
+  "boundaries": {
+    "train": {
+      "start": "2015-11-16T10:43:28+00:00",
+      "end": "2017-08-30T17:25:40+00:00",
+      "before_deduplication": 786,
+      "after_deduplication": 786,
+      "class_support": {
+        "bug": 430,
+        "enhancement": 267,
+        "question": 89
+      }
+    },
+    "validation": {
+      "start": "2017-08-30T21:13:38+00:00",
+      "end": "2017-09-19T23:48:16+00:00",
+      "before_deduplication": 168,
+      "after_deduplication": 168,
+      "class_support": {
+        "bug": 110,
+        "enhancement": 24,
+        "question": 34
+      }
+    },
+    "test": {
+      "start": "2017-09-20T03:57:28+00:00",
+      "end": "2017-10-03T12:55:34+00:00",
+      "before_deduplication": 169,
+      "after_deduplication": 169,
+      "class_support": {
+        "enhancement": 14,
+        "bug": 126,
+        "question": 29
+      }
+    }
+  },
+  "limitations": [
+    "Chronological retrospective evaluation using collected snapshots. Historical issue text and labels may have been edited or assigned after creation; training-label availability at the cutoff is not established.",
+    "English-language suitability is audited by sample, not automatically guaranteed",
+    "Template cleaning is narrow; sensitivity metrics and manual error inspection are needed"
+  ]
+}

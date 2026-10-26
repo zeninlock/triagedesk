@@ -1,0 +1,50 @@
+# Prepared and schema-checked, not deployed. Paid resources; review docs/DEPLOYMENT.md first.
+services:
+  - type: pserv
+    name: triagedesk-api
+    runtime: docker
+    plan: 0.5c-512mb
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    dockerCommand: sh scripts/start-api.sh
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase: {name: triagedesk-db, property: connectionString}
+      - key: ARTIFACT_DIR
+        value: /var/data/artifacts
+      - key: MODE
+        value: fixture
+      - key: READ_ONLY
+        value: "true"
+      - key: REVIEWER_TOKEN
+        sync: false
+      - key: REVIEWER_NAME
+        value: maintainer
+      - key: PORT
+        value: "8000"
+    disk:
+      name: artifacts
+      mountPath: /var/data
+      sizeGB: 1
+  - type: web
+    name: triagedesk-ui
+    runtime: docker
+    plan: 0.5c-512mb
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    dockerCommand: sh scripts/start-ui.sh
+    healthCheckPath: /_stcore/health
+    envVars:
+      - key: API_HOST
+        fromService: {name: triagedesk-api, type: pserv, property: host}
+      - key: API_PORT
+        value: "8000"
+databases:
+  - name: triagedesk-db
+    plan: 0.1c-256mb
+    region: singapore
+    databaseName: triagedesk
+    user: triagedesk
+    postgresMajorVersion: "17"
+    diskSizeGB: 1
+    ipAllowList: []

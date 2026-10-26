@@ -1,0 +1,165 @@
+{
+  "collected_at": "2026-10-25 23:24:26.393634+00:00",
+  "mapping_version": "labels-v1",
+  "repositories": [
+    {
+      "repository": "textualize/rich",
+      "available_issues_search_count": 1547,
+      "search_incomplete": false,
+      "open_issues_and_pull_requests_metadata": 388,
+      "label_names": [
+        "accepted",
+        "awaiting response",
+        "blocked",
+        "bug",
+        "Can't reproduce",
+        "dependencies",
+        "documentation",
+        "done",
+        "duplicate",
+        "enhancement",
+        "github_actions",
+        "good first issue",
+        "hacktoberfest",
+        "help wanted",
+        "invalid",
+        "jupyter",
+        "more information needed",
+        "Needs triage",
+        "no work required",
+        "python",
+        "question",
+        "task",
+        "upstream",
+        "windows",
+        "wontfix"
+      ],
+      "unique_sampled_issues": 128,
+      "cohorts": {
+        "earliest_updated": {
+          "response_objects": 100,
+          "pull_requests_excluded": 24,
+          "issues": 76,
+          "categories": {
+            "unsupported_or_unlabeled": 59,
+            "bug": 11,
+            "enhancement": 6
+          },
+          "labels": {
+            "accepted": 7,
+            "bug": 11,
+            "enhancement": 6,
+            "wontfix": 1,
+            "task": 1,
+            "upstream": 1
+          },
+          "conflicts": 0
+        },
+        "recent_created": {
+          "response_objects": 100,
+          "pull_requests_excluded": 48,
+          "issues": 52,
+          "categories": {
+            "unsupported_or_unlabeled": 52
+          },
+          "labels": {
+            "Needs triage": 22
+          },
+          "conflicts": 0
+        }
+      },
+      "examples_for_manual_language_template_audit": [
+        {
+          "number": 1,
+          "title": "Will there be a license?",
+          "labels": [],
+          "created_at": "2020-01-23T19:34:37Z",
+          "updated_at": "2020-01-26T15:31:06Z",
+          "url": "https://github.com/Textualize/rich/issues/1"
+        },
+        {
+          "number": 6,
+          "title": "README.md - table.add_column error in readme",
+          "labels": [
+            "accepted"
+          ],
+          "created_at": "2020-01-29T12:53:38Z",
+          "updated_at": "2020-01-29T13:36:41Z",
+          "url": "https://github.com/Textualize/rich/issues/6"
+        },
+        {
+          "number": 7,
+          "title": "Console width off by one on some terminals / ssh",
+          "labels": [
+            "accepted"
+          ],
+          "created_at": "2020-02-04T10:07:43Z",
+          "updated_at": "2020-02-04T18:32:13Z",
+          "url": "https://github.com/Textualize/rich/issues/7"
+        },
+        {
+          "number": 10,
+          "title": "Underscores are being stripped out incorrectly in table cells",
+          "labels": [],
+          "created_at": "2020-02-24T19:34:45Z",
+          "updated_at": "2020-02-24T20:52:10Z",
+          "url": "https://github.com/Textualize/rich/issues/10"
+        },
+        {
+          "number": 8,
+          "title": "Traceback output issue when code uses tab indentation",
+          "labels": [],
+          "created_at": "2020-02-24T14:15:12Z",
+          "updated_at": "2020-03-03T17:55:06Z",
+          "url": "https://github.com/Textualize/rich/issues/8"
+        },
+        {
+          "number": 4242,
+          "title": "escape() drops the backslash when it precedes a bracket that isn't a tag",
+          "labels": [],
+          "created_at": "2026-10-24T11:25:43Z",
+          "updated_at": "2026-10-25T20:07:12Z",
+          "url": "https://github.com/Textualize/rich/issues/4242"
+        },
+        {
+          "number": 4241,
+          "title": "Cover refresh of nested Live displays in tests",
+          "labels": [],
+          "created_at": "2026-10-22T20:50:12Z",
+          "updated_at": "2026-10-22T20:50:12Z",
+          "url": "https://github.com/Textualize/rich/issues/4241"
+        },
+        {
+          "number": 4240,
+          "title": "[BUG] Three workflows still point at the master branch, so CodeQL and the FAQ bot have been dead since the rename",
+          "labels": [],
+          "created_at": "2026-10-22T00:24:13Z",
+          "updated_at": "2026-10-22T00:24:13Z",
+          "url": "https://github.com/Textualize/rich/issues/4240"
+        },
+        {
+          "number": 4239,
+          "title": "[BUG] IndexError when wrapping text whose grapheme width is smaller than its cell count (zero-width joiners)",
+          "labels": [],
+          "created_at": "2026-10-18T08:52:27Z",
+          "updated_at": "2026-10-21T10:39:41Z",
+          "url": "https://github.com/Textualize/rich/issues/4239"
+        },
+        {
+          "number": 4238,
+          "title": "[BUG] Traceback.extract loops forever when __cause__ and __context__ form a cycle",
+          "labels": [],
+          "created_at": "2026-10-15T16:11:04Z",
+          "updated_at": "2026-10-22T16:42:18Z",
+          "url": "https://github.com/Textualize/rich/issues/4238"
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "Purposive oldest-updated and newest-created samples, not random estimates of class prevalence",
+    "Labels are current, not historical; cohort differences cannot prove a convention change",
+    "Language consistency and explicit category templates require inspecting actual sample text",
+    "sample controls each cohort up to 100 objects; no more than 200 objects per repository in this small audit"
+  ]
+}

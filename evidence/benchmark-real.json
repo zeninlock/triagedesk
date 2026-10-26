@@ -1,0 +1,62 @@
+{
+  "measured_at": "2026-10-25 23:45:38.491499+00:00",
+  "mode": "real",
+  "issue_count": 4164,
+  "query_repository": "microsoft/vscode",
+  "query_repository_issue_count": 2999,
+  "hardware": {
+    "platform": "macOS-15.3-arm64-arm-64bit",
+    "architecture": "arm64",
+    "logical_cpus": 8
+  },
+  "cold_first_classification_ms": 28.946958016604185,
+  "cold_first_tfidf_retrieval_ms": 119.30887505877763,
+  "cold_first_semantic_retrieval_ms": 3274.1192498942837,
+  "measurements": {
+    "classification": {
+      "requests": 100,
+      "p50_ms": 0.23879151558503509,
+      "p95_ms": 0.3674108302220702,
+      "min_ms": 0.21566706709563732,
+      "max_ms": 0.6731660105288029
+    },
+    "retrieval_tfidf": {
+      "requests": 100,
+      "p50_ms": 3.8683954626321793,
+      "p95_ms": 5.4817201860714695,
+      "min_ms": 2.857582992874086,
+      "max_ms": 28.695791959762573
+    },
+    "retrieval_semantic": {
+      "requests": 100,
+      "p50_ms": 10.989312489982694,
+      "p95_ms": 17.310341919073835,
+      "min_ms": 8.22375004645437,
+      "max_ms": 19.579750020056963
+    },
+    "api_issues": {
+      "requests": 100,
+      "p50_ms": 13.879021047614515,
+      "p95_ms": 16.669412498595193,
+      "min_ms": 12.171791982837021,
+      "max_ms": 47.772416030056775
+    },
+    "api_dashboard": {
+      "requests": 100,
+      "p50_ms": 27.207625040318817,
+      "p95_ms": 30.734853819012642,
+      "min_ms": 22.534416988492012,
+      "max_ms": 40.76333297416568
+    },
+    "api_issues_1190": {
+      "requests": 100,
+      "p50_ms": 4.831916536204517,
+      "p95_ms": 6.542775681009515,
+      "min_ms": 4.057666985318065,
+      "max_ms": 32.931333989836276
+    }
+  },
+  "protocol": "Sequential warm requests cycling up to 20 titles. Model/index first load excluded from percentiles and measured separately. Semantic query encoding included; corpus embedding generation excluded. API requests include HTTP, SQL and serialization. No concurrency/load claim.",
+  "classification_status": "measured",
+  "limitations": "Small imported corpus on this machine; targets for thousands of issues are not established by fixture measurements"
+}

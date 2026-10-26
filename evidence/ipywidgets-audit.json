@@ -1,0 +1,203 @@
+{
+  "collected_at": "2026-10-25 23:27:33.603096+00:00",
+  "mapping_version": "labels-v1",
+  "repositories": [
+    {
+      "repository": "jupyter-widgets/ipywidgets",
+      "available_issues_search_count": 2079,
+      "search_incomplete": false,
+      "open_issues_and_pull_requests_metadata": 808,
+      "label_names": [
+        "answered",
+        "backport",
+        "backwards-incompatible",
+        "bug",
+        "closing as answered",
+        "critical",
+        "Custom Widget",
+        "Custom widget idea",
+        "dependencies",
+        "discussion",
+        "docs",
+        "documentation",
+        "duplicate",
+        "enhancement",
+        "environment",
+        "feature request",
+        "github_actions",
+        "good first issue",
+        "help wanted",
+        "javascript",
+        "kernel authors beware",
+        "maintenance",
+        "needs discussion",
+        "needs info",
+        "needs triaging",
+        "not ipywidgets",
+        "pkg:base",
+        "pkg:controls",
+        "pkg:html-manager",
+        "pkg:ipywidgets",
+        "pkg:jupyterlab",
+        "pkg:widgetsnbextension",
+        "proposal",
+        "protocol",
+        "python",
+        "question",
+        "regression",
+        "resolved-locked",
+        "roadmap",
+        "state",
+        "Still Needs Manual Backport",
+        "suggestion",
+        "ux/ui",
+        "Work in Progress"
+      ],
+      "unique_sampled_issues": 150,
+      "cohorts": {
+        "earliest_updated": {
+          "response_objects": 100,
+          "pull_requests_excluded": 0,
+          "issues": 100,
+          "categories": {
+            "unsupported_or_unlabeled": 93,
+            "question": 2,
+            "enhancement": 1,
+            "bug": 4
+          },
+          "labels": {
+            "roadmap": 2,
+            "question": 2,
+            "proposal": 1,
+            "feature request": 5,
+            "enhancement": 1,
+            "bug": 4,
+            "needs info": 4,
+            "ux/ui": 2,
+            "discussion": 5,
+            "docs": 8,
+            "good first issue": 9
+          },
+          "conflicts": 0
+        },
+        "recent_created": {
+          "response_objects": 100,
+          "pull_requests_excluded": 50,
+          "issues": 50,
+          "categories": {
+            "unsupported_or_unlabeled": 50
+          },
+          "labels": {
+            "docs": 3,
+            "resolved-locked": 7,
+            "Custom Widget": 1,
+            "answered": 1,
+            "closing as answered": 1
+          },
+          "conflicts": 0
+        }
+      },
+      "examples_for_manual_language_template_audit": [
+        {
+          "number": 721,
+          "title": "Why are IntSlider and FloatSlider completely independent?",
+          "labels": [
+            "roadmap"
+          ],
+          "created_at": "2016-08-17T13:55:39Z",
+          "updated_at": "2016-11-08T19:07:10Z",
+          "url": "https://github.com/jupyter-widgets/ipywidgets/issues/721"
+        },
+        {
+          "number": 614,
+          "title": "widgets.interactive() seems to force a label be used",
+          "labels": [
+            "question"
+          ],
+          "created_at": "2016-05-27T19:03:46Z",
+          "updated_at": "2016-11-08T19:36:56Z",
+          "url": "https://github.com/jupyter-widgets/ipywidgets/issues/614"
+        },
+        {
+          "number": 31,
+          "title": "Eventful list and eventful dict support.",
+          "labels": [
+            "proposal",
+            "feature request",
+            "roadmap"
+          ],
+          "created_at": "2015-05-12T18:19:55Z",
+          "updated_at": "2016-11-08T20:21:38Z",
+          "url": "https://github.com/jupyter-widgets/ipywidgets/issues/31"
+        },
+        {
+          "number": 910,
+          "title": "Provide a way to easily create and layout widgets for something like interact",
+          "labels": [
+            "feature request",
+            "enhancement"
+          ],
+          "created_at": "2016-11-16T21:50:46Z",
+          "updated_at": "2016-11-24T10:14:41Z",
+          "url": "https://github.com/jupyter-widgets/ipywidgets/issues/910"
+        },
+        {
+          "number": 1034,
+          "title": "Make server communication a property of the store, not the widget",
+          "labels": [],
+          "created_at": "2017-01-06T18:47:01Z",
+          "updated_at": "2017-01-31T18:18:04Z",
+          "url": "https://github.com/jupyter-widgets/ipywidgets/issues/1034"
+        },
+        {
+          "number": 4048,
+          "title": "Async kernels - Frontend -> kernel state sync stalls permanently after the first update: _pending_msgs throttle is never released",
+          "labels": [],
+          "created_at": "2026-10-25T10:52:04Z",
+          "updated_at": "2026-10-25T11:00:49Z",
+          "url": "https://github.com/jupyter-widgets/ipywidgets/issues/4048"
+        },
+        {
+          "number": 4047,
+          "title": "Bundled sanitize-html is vulnerable to XSS (CVE-2026-53606, CVE-2026-84371) — bump to >= 2.17.7",
+          "labels": [],
+          "created_at": "2026-10-12T07:06:26Z",
+          "updated_at": "2026-10-12T07:06:26Z",
+          "url": "https://github.com/jupyter-widgets/ipywidgets/issues/4047"
+        },
+        {
+          "number": 4039,
+          "title": "The Output Widget guide does not show cell outputs",
+          "labels": [
+            "docs"
+          ],
+          "created_at": "2026-08-25T19:47:03Z",
+          "updated_at": "2026-09-14T03:30:50Z",
+          "url": "https://github.com/jupyter-widgets/ipywidgets/issues/4039"
+        },
+        {
+          "number": 4038,
+          "title": "interaction of ipywidges.widgets Output  with matplotlib.animation",
+          "labels": [],
+          "created_at": "2026-08-24T11:49:19Z",
+          "updated_at": "2026-08-26T08:37:16Z",
+          "url": "https://github.com/jupyter-widgets/ipywidgets/issues/4038"
+        },
+        {
+          "number": 4036,
+          "title": "jupyterlab-widgets installs .gitignore",
+          "labels": [],
+          "created_at": "2026-08-19T09:57:47Z",
+          "updated_at": "2026-08-19T09:57:47Z",
+          "url": "https://github.com/jupyter-widgets/ipywidgets/issues/4036"
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "Purposive oldest-updated and newest-created samples, not random estimates of class prevalence",
+    "Labels are current, not historical; cohort differences cannot prove a convention change",
+    "Language consistency and explicit category templates require inspecting actual sample text",
+    "sample controls each cohort up to 100 objects; no more than 200 objects per repository in this small audit"
+  ]
+}
