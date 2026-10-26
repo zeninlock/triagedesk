@@ -18,6 +18,7 @@ htmlcov/
 .env.*
 !.env.example
 !.env.*.example
+.streamlit/secrets.toml
 
 # Generated datasets, models, databases, and logs
 artifacts/

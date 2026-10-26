@@ -1,6 +1,6 @@
 # Deployment operations
 
-For the current verified-maintainer deployment, follow [HOSTING.md](HOSTING.md). The Render blueprint now uses `MODE=real`, `AUTH_MODE=github`, an encrypted credential store, a private API, and individual GitHub identities. The shared reviewer token belongs only to the local fixture demo.
+For free temporary hosting with verified maintainers, follow [HOSTING.md](HOSTING.md). The recommended Community Cloud/Neon setup runs the UI and a loopback-only API in one app, with durable PostgreSQL in Neon and temporary local artifacts. A Cloudflare Quick Tunnel can instead share your local Docker installation. Both methods require `MODE=real` and `AUTH_MODE=github`; the cloud helper enforces these. The shared reviewer token belongs only to the local fixture demo. The existing Render blueprint is a separate paid option and is not needed for the free methods.
 
 ## Storage and recovery
 
@@ -22,7 +22,7 @@ Preserve `AUTH_ENCRYPTION_KEY` securely if restoring sessions from a database ba
 
 The API startup script applies migrations before accepting traffic. Migration `0002` adds the session, device-login, repository-access, and connection-job tables plus suggestion provenance fields. It preserves existing issue and review records.
 
-Local `docker compose down` retains named volumes. The database and artifact volumes persist across ordinary service recreation. Cloud persistence depends on keeping the managed PostgreSQL instance and API disk attached.
+Local `docker compose down` retains named volumes. The database and artifact volumes persist across ordinary service recreation. For Community Cloud/Neon, database persistence depends on keeping the Neon project. Backend restarts discard temporary artifacts; rebuild TF-IDF through the connection form after restarting. For the optional paid Render setup, persistence depends on keeping its managed PostgreSQL instance and API disk attached.
 
 A stopped import retains committed GitHub pages. Its expired lease is released by a later status check or submission; retrying synchronization resumes from the saved update checkpoint. A process restart does not automatically recreate a background worker or retrain a classifier.
 

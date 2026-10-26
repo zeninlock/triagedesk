@@ -88,3 +88,10 @@ The new GitHub-backed session, repository-role, scoped-workspace, import-job, an
 An additional read-only live API check fetched 50 VS Code response objects into an isolated database: 49 issues persisted and one PR was excluded. Source-label/text-rule suggestions categorized 33 reports (11 bug, 19 enhancement, 3 question); 16 remained for manual categorization. This is a functionality check, not an accuracy assessment. Twenty-three suggestions came from GitHub labels and ten from text rules, with no fabricated probability scores. Related search returned five candidates and excluded self. See `evidence/live-public-import-v02.json`.
 
 The current production blueprint was validated against Render's official schema. The new local installation serves the sign-in screen and rejects unauthenticated workspace data requests. No cloud URL, user time saving, rule accuracy, or genuine relevance judgment is claimed.
+
+
+## Free temporary hosting update
+
+The free Community Cloud entrypoint runs the API on loopback in the same installation as Streamlit, while an external PostgreSQL database supplies durable storage. It forces real/GitHub mode and excludes inherited shared provider/reviewer tokens. The full local suite now has 74 passing tests, including eight PostgreSQL integration tests (`evidence/free-hosting-tests.xml`). A separate non-root Linux container check with actual PostgreSQL rendered the sign-in UI for two simulated visitors, reused a single private backend, and returned HTTP 401 for unauthenticated workspace data (`evidence/free-hosting-smoke.json`). Lint, formatting, and migration-drift checks passed.
+
+No live Streamlit Community Cloud, Neon connection, new GitHub sign-in, or cloud performance result is claimed by these local checks. Follow HOSTING.md to configure the owner's accounts and complete hosted verification. Historical classifier and retrieval measurements above are unchanged.

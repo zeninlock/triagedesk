@@ -51,7 +51,7 @@ A repository without issues yields an empty queue. Capped imports are partial. T
 
 ## Host online
 
-Follow [the complete Render hosting and GitHub authentication guide](docs/HOSTING.md). The included blueprint provisions a public HTTPS interface, private API, managed PostgreSQL, persistent artifact disk, and generated encryption key. It uses individual GitHub sessions and does not accept the shared local reviewer token. Review Render's current paid-resource total before provisioning. No cloud resources or live deployment have been created by this source update.
+Follow [the free temporary hosting and GitHub authentication guide](docs/HOSTING.md). The recommended setup uses **Streamlit Community Cloud + Neon Free**: deploy `ui/community_app.py`, add the database URL and encryption secret in the hosting settings, then sign in and connect a public repository. Your laptop can be off. A second option shares the local dashboard through a temporary **Cloudflare Quick Tunnel** while your computer stays on. The existing Render blueprint uses paid resources and is optional; neither free method uses it. No provider accounts or hosted URL have been created by this source update.
 
 ## Problem and intended users
 
@@ -73,7 +73,7 @@ Here, “product feedback” means the reports in a GitHub issue tracker. The ap
 | Review safeguards | Reject stale forms and conflicting updates; recognize repeated submissions without duplicating history. |
 | Filtered analytics | Filter by repository, source creation date, open/closed state, category source, and review status. |
 | Reproducible evaluation | Preserve dataset membership, label mapping, chronological splits, model settings, dependency versions, metrics, and artifacts. |
-| Deployment | Run locally with Docker Compose, or provision the included GitHub-authenticated Render blueprint. |
+| Deployment | Run locally with Docker Compose, use the free Community Cloud/Neon demo setup, or share a temporary local tunnel. |
 
 The interface contains **Connect repository**, **Overview**, **Review queue**, **Issue details**, **Try a new issue**, **Model evaluation**, and **About/methodology** views. “Try a new issue” classifies entered text without creating a GitHub issue or storing a new report. A trained artifact is required for that classification request.
 
@@ -95,13 +95,13 @@ These actions update TriageDesk's database. A maintainer must make any desired c
 |---|---|
 | Runnable fixture demo | Verified with Docker Compose, migrations, 24 invented issues and health checks |
 | Protected reviews and durable audit | Browser and HTTP saves verified; history/count changes and PostgreSQL restart persistence verified |
-| Automated checks | 68 tests passed, including eight PostgreSQL integration tests; legacy functionality and new identity/permission/import flows checked |
+| Automated checks | 74 tests passed, including eight PostgreSQL integration tests; identity/permission/import flows and free-cloud startup configuration checked |
 | GitHub authentication | Device and fine-grained-token flows implemented; encrypted credential persistence, expiry/logout, role checks, isolation, and mocked end-to-end imports tested. Live App setup/sign-in remains owner verification. |
 | Real ingestion | 2,999 VS Code issues plus a separate 1,165-issue Streamlit pilot imported; PRs excluded; pilot was rejected for classification |
 | Real classification | 1,123 usable VS Code snapshots; chronological test macro-F1 **0.5446** vs majority **0.2847**; accuracy **0.6923** vs majority **0.7456** |
 | Retrieval | TF-IDF and pinned MiniLM built over 4,164 real issues; self/repository/stale filtering verified; relevance quality pending |
 | Latency | 100 warm requests per operation measured; see evaluation report for hardware, p50/p95 and loading costs |
-| Deployment | Render Blueprint/schema and local containers prepared/checked; **not deployed**, no hosted URL claimed |
+| Deployment | Free Community Cloud entrypoint checked locally with PostgreSQL and two simulated visitors; optional Render schema checked; **not deployed**, no hosted URL claimed |
 | Maintainer study | Protocol/materials ready; **pending**, no user findings or feedback-based improvements claimed |
 
 This is a working local MVP. Hosted verification, genuine retrieval judgments, maintainer sessions, and a measured improvement based on user feedback remain pending. Read [evaluation](docs/EVALUATION.md) before citing a model score. Results below were recorded locally on 26 October 2026; repository publication does not itself verify a hosted deployment or a remote CI run.
@@ -176,6 +176,8 @@ triagedesk/
 │   ├── config.py              # Environment-based settings
 │   └── cli.py                 # Administrative command entrypoint
 ├── ui/app.py                  # Streamlit application
+├── ui/community_app.py        # Free cloud entrypoint with a private API
+├── ui/requirements.txt        # Base package install for Community Cloud
 ├── ui/account.py              # Sign-in, repository connection, import progress
 ├── tests/                     # Unit, API, and PostgreSQL tests
 ├── alembic/                   # Database migration history
@@ -387,8 +389,9 @@ API_URL=http://localhost:8000 REVIEWER_TOKEN=local-demo-change-me uv run python 
 
 ### What was tested
 
-The updated PostgreSQL-enabled local run contains **68 passed tests**, with no failures or skips. Eight use actual PostgreSQL; other checks use in-memory SQLite, local components, or mocked external responses where appropriate.
+The updated PostgreSQL-enabled local run contains **74 passed tests**, with no failures or skips. Eight use actual PostgreSQL; other checks use in-memory SQLite, local components, or mocked external responses where appropriate.
 
+- **Free-cloud startup:** mandatory PostgreSQL/secret configuration, forced GitHub authentication, inherited shared credentials removed, failed-start cleanup, and safe error messages. The entrypoint also passed a separate local UI/API startup check with PostgreSQL and two simulated visitors.
 - **Identity and access:** encrypted provider credentials, hashed sessions, expiry/logout, numeric GitHub identity, repository isolation, denied roles, revoked write access, device polling, malformed URLs, and concurrent import admission.
 - **Ingestion:** page traversal, PR exclusion, idempotent imports, failed-page rollback, partial collection status, preserved snapshots, API failures, and rate-limit handling.
 - **ML:** label conflicts, unsupported labels, chronological boundaries, exact/near duplicate screening, training-only preprocessing, save/load consistency, and threshold metrics.
@@ -398,7 +401,7 @@ The updated PostgreSQL-enabled local run contains **68 passed tests**, with no f
 
 Additional local checks covered an actual browser save, clean Docker startup from the extracted source, review survival after service/container restart, restoration into a new database, and the optional Linux CPU semantic container. Passing these checks establishes the tested software behavior, not model accuracy or user usefulness.
 
-The smoke script intentionally writes only to synthetic mode and refuses real data. Integration tests create isolated schemas in the dedicated test database and remove only their own generated schemas. CI uses a PostgreSQL service, mocked GitHub and no live token/model downloads. Local result: 68 passed; a remote GitHub Actions success must be checked after publication.
+The smoke script intentionally writes only to synthetic mode and refuses real data. Integration tests create isolated schemas in the dedicated test database and remove only their own generated schemas. CI uses a PostgreSQL service, mocked GitHub and no live token/model downloads. Local result: 74 passed; a remote GitHub Actions success must be checked after publication.
 
 ## API and configuration
 
@@ -485,7 +488,7 @@ The repository includes `.github/workflows/ci.yml`, `.env.example`, and `uv.lock
 - Run the documented maintainer study and measure review effort and usefulness.
 - Make and evaluate at least one improvement justified by that feedback.
 - Collect recent, consistently labeled reports and compare classifier improvements on fresh held-out data.
-- Provision and verify a hosted deployment using the prepared blueprint.
+- Deploy and verify the free Community Cloud/Neon demo using the hosting guide.
 - Verify remote CI after publishing the repository.
 
 Changes to classification, retrieval, and workflow should have separate evidence. No target score, user time saving, or deployment success is assumed in advance.
@@ -501,7 +504,7 @@ Use a focused branch, keep generated data and secrets out of commits, and run th
 - [Product brief and acceptance criteria](docs/PRODUCT_BRIEF.md)
 - [Architecture and Mermaid diagram](docs/ARCHITECTURE.md), [decisions](docs/DECISIONS.md)
 - [Data card](docs/DATA_CARD.md), [model card](docs/MODEL_CARD.md), [actual evaluation and benchmarks](docs/EVALUATION.md)
-- [Render deployment preparation and costs](docs/DEPLOYMENT.md)
+- [Deployment operations, persistence, and backups](docs/DEPLOYMENT.md)
 - [Maintainer study, consent, recruitment, form and iteration log](docs/USER_VALIDATION.md)
 - [3–5 minute demo script](docs/DEMO_SCRIPT.md), [interview preparation and AI disclosure](docs/INTERVIEW_PREP.md), [résumé drafts](docs/RESUME.md)
 - [Progress and remaining work](docs/PROGRESS.md), [data/model/documentation attribution](docs/ATTRIBUTION.md)

@@ -3,6 +3,7 @@
 .env
 .env.*
 !.env.example
+.streamlit/secrets.toml
 artifacts
 data
 __pycache__

@@ -1,0 +1,2 @@
+# Community Cloud searches the entrypoint directory first; install only base dependencies.
+-e .

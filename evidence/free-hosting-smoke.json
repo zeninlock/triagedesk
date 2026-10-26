@@ -1,0 +1,14 @@
+{
+  "scope": "Local Linux container with PostgreSQL; not a live Streamlit or Neon deployment",
+  "entrypoint": "ui/community_app.py",
+  "ui_sign_in_rendered": true,
+  "private_api_loopback_only": true,
+  "api_database_ready": true,
+  "enforced_mode": "real",
+  "enforced_auth_mode": "github",
+  "unauthenticated_workspace_status": 401,
+  "second_visitor_reuses_backend": true,
+  "optional_semantic_dependencies_installed": false,
+  "live_github_sign_in_verified": false,
+  "cloud_deployment_verified": false
+}
