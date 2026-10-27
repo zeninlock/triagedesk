@@ -1,14 +1,12 @@
 # TriageDesk
 
-**GitHub-authenticated issue triage and product feedback dashboard**
+**Automatic AI labels and an uncertainty-focused review desk for GitHub maintainers**
 
-TriageDesk is a web application for verified GitHub maintainers to connect public repositories and organize their actual issues. It imports public reports through the dashboard, prepares **bug**, **enhancement**, or **question** suggestions, retrieves potentially related issues, and records a human decision with the verified reviewer identity.
+TriageDesk imports public GitHub issues, assigns labels across five configurable groups, and saves the result in PostgreSQL. Confident results are auto-sorted; uncertain results go to a dedicated **Needs review** tab. Completed human decisions move to **Reviewed**. GitHub remains unchanged: these labels and reviews live inside TriageDesk.
 
-It combines a review dashboard with a reproducible machine-learning pipeline. GitHub access is read-only: the application never changes source labels, closes issues, or posts comments. Classification and similarity scores support a reviewer; they do not establish correctness or prove that reports are duplicates.
+The lightweight hosted application calls **Groq's free-plan API** rather than downloading a large language model. Add your own `GROQ_API_KEY` in hosting secrets to enable it. The existing FastAPI, PostgreSQL, Streamlit, Docker, historical scikit-learn classifier, and optional semantic-search pipeline remain available.
 
-Implemented end to end with FastAPI, PostgreSQL, SQLAlchemy/Alembic, scikit-learn, optional CPU Sentence Transformers, Streamlit, Docker Compose, pytest and GitHub Actions. No paid AI API or GPU is needed.
-
-![Actual synthetic overview](docs/screenshots/overview.jpg)
+Version 0.3 adds the AI label cache, nested label tabs, repository-specific label settings, automatic active-session synchronization, and removal of issues confirmed closed. See [the AI activation and upgrade guide](docs/AI_LABELS.md) and [free hosting](docs/HOSTING.md).
 
 ## Contents
 
@@ -34,20 +32,21 @@ Implemented end to end with FastAPI, PostgreSQL, SQLAlchemy/Alembic, scikit-lear
 
 ## Connect your repository
 
-The production workflow is **sign in → verify maintainer access → paste a public repository → import and categorize → review**. Terminal import commands are no longer required for normal maintainers.
+The workflow is **sign in → connect a public repository → import open issues → automatically assign AI labels → review only uncertain results**.
 
-To try verified mode locally, with Docker running and Python 3 available for the one-time configuration helper:
+For local verified mode, with Docker running:
 
 ```sh
 python3 scripts/setup-github-local.py
+# Add your own GROQ_API_KEY to the ignored .env to enable automatic analysis.
 docker compose up --build -d --wait
 ```
 
-The helper preserves existing settings, generates a private encryption key if needed, and selects `MODE=real`, `AUTH_MODE=github`, and protected writes. Open [the dashboard](http://localhost:8501). Sign in with a fine-grained GitHub token granting Metadata: read and Issues: read for the repository. Alternatively, configure a read-only GitHub App and `GITHUB_CLIENT_ID` to enable browser/device sign-in; see [the hosting guide](docs/HOSTING.md).
+Open the dashboard at the configured UI port (8501 by default). Sign in using a fine-grained GitHub token with Metadata: read and Issues: read, or configure the optional GitHub App device flow. GitHub separately verifies ownership or triage/write/maintain/admin access before imports and decisions.
 
-Open **Connect repository**, enter `owner/repository` or its canonical GitHub URL, choose the fetch cap, and submit. GitHub must confirm ownership or triage/write/maintain/admin access. The app tracks import progress, excludes PRs, saves issue snapshots, prepares suggestions, and builds TF-IDF search. Select the repository and use the category filter in the review queue. Later, use the same form's synchronization option to fetch updates.
+Use **Connect repository**, enter `owner/repository`, and start the import. Select its workspace and browse **Issues → label group → label**. Newest updated open issues are fetched first; PRs are excluded and capped imports remain partial. Initial imports and later updates automatically analyze pending reports in small batches. Repeated logins reuse completed analysis from PostgreSQL.
 
-A repository without issues yields an empty queue. Capped imports are partial. Trained models are used for their own repository when installed; otherwise, clear GitHub category labels and unscored text rules provide suggestions. Ambiguous reports remain for manual categorization. No measured accuracy is claimed for these fallback methods, and human decisions take precedence.
+While the selected workspace is open, it checks for updates about every 60 seconds. Provider quotas, active jobs, or sleeping free hosting can delay processing. When a closure is detected, that issue and its dependent local analysis/review history are deleted. A reopened issue can be imported again. The private historical import/training CLI retains its old open/closed behavior for research.
 
 ## Host online
 
@@ -65,29 +64,30 @@ Here, “product feedback” means the reports in a GitHub issue tracker. The ap
 
 | Capability | Behavior |
 |---|---|
-| Verified GitHub connection | Sign in, confirm repository maintainer permissions, and start an observable import/sync job from the dashboard. |
-| Public GitHub ingestion | Import open and closed issues, exclude pull requests, handle pagination and rate limits, and preserve source revisions. |
-| Category suggestions | Use a compatible repository classifier when installed; otherwise show clearly marked source-label/rule suggestions and leave ambiguous reports for manual review. |
-| Related-report search | Retrieve up to five candidates with TF-IDF or optional pinned CPU MiniLM embeddings; exclude self and stale/unavailable records. |
-| Human review | Accept or correct a suggestion, defer or skip a report, add a note, and inspect previous decisions. |
-| Review safeguards | Reject stale forms and conflicting updates; recognize repeated submissions without duplicating history. |
-| Filtered analytics | Filter by repository, source creation date, open/closed state, category source, and review status. |
-| Reproducible evaluation | Preserve dataset membership, label mapping, chronological splits, model settings, dependency versions, metrics, and artifacts. |
-| Deployment | Run locally with Docker Compose, use the free Community Cloud/Neon demo setup, or share a temporary local tunnel. |
+| Individual GitHub authentication | Verify identity and repository maintainer rights; scope each account to its connected workspaces. |
+| Automatic AI labels | Groq returns a type and applicable priority, module, contributor, and workflow labels, with explanations and supporting text. |
+| Persistent analysis cache | Reuse the same snapshot/model/prompt/taxonomy result across logins and app restarts. |
+| Uncertainty routing | Scores below the default 0.85 cutoff or an explicit uncertainty flag enter Needs review. Scores are model-reported, uncalibrated confidence. |
+| Separate Reviewed tab | Human corrections take precedence and leave the pending review queue immediately. Existing version-0.2 reviews are recognized. |
+| Nested label tabs | Browse by group and label; select a row to see details. Customize label names per repository in Label settings. |
+| AI distribution | Overview shows how the LLM labeled current open reports, including suggestions awaiting review. |
+| Active-session synchronization | Check for new/updated/closed issues while a workspace is open; purge confirmed closures and resume pending AI batches. |
+| Related reports | TF-IDF retrieval by default, with the existing optional MiniLM pipeline available for separately prepared deployments. |
+| Historical ML evaluation | Keep reproducible scikit-learn experiments, frozen splits, model provenance, and recorded limitations. |
+| Free deployment | Community Cloud + Neon Free, or a temporary local Cloudflare tunnel. |
 
-The interface contains **Connect repository**, **Overview**, **Review queue**, **Issue details**, **Try a new issue**, **Model evaluation**, and **About/methodology** views. “Try a new issue” classifies entered text without creating a GitHub issue or storing a new report. A trained artifact is required for that classification request.
+Missing API credentials or failed/rate-limited AI calls leave reports **Waiting for AI**; the app does not fabricate labels or call a text rule an LLM result.
 
 ## Example workflow
 
-1. Open the overview and select the repository or backlog slice to inspect.
-2. Open the review queue and inspect an issue, for example the synthetic report **“CSV export loses the final row.”**
-3. Read the source text and labels, then inspect the category suggestion and potentially related reports.
-4. Choose **accept**, **correct**, **defer**, or **skip**, and optionally add a note.
-5. Save the decision and inspect its history. A completed category decision changes the filtered dashboard counts.
+1. A signed-in maintainer opens a connected repository; synchronization finds a new report.
+2. The background job analyzes it using the configured label taxonomy and saves its output in PostgreSQL.
+3. A confident report appears Auto-sorted. An uncertain report appears in Needs review.
+4. The maintainer selects an uncertain issue row, checks its text and label evidence, adjusts labels if necessary, and saves.
+5. The issue moves to Reviewed. The review history and original AI output stay available while the issue remains open.
+6. Later page visits reuse the saved result. Meaningful source/model/prompt/taxonomy changes can require new analysis.
 
-Accept and correct complete the review for the current issue snapshot. Defer and skip leave the issue awaiting a completed decision. If the source issue changes, its earlier history remains available but a previous decision no longer counts as the current review. Relationship judgments can separately record **related**, **duplicate**, **unrelated**, or **uncertain**.
-
-These actions update TriageDesk's database. A maintainer must make any desired change on GitHub separately.
+Priority and contributor labels are suggestions supported by the supplied report/labels, not verified business priority or effort estimates. Optional groups can remain empty when evidence is absent. Source GitHub labels, comments, and issue state are never changed by TriageDesk.
 
 ## Verified status
 
@@ -95,7 +95,8 @@ These actions update TriageDesk's database. A maintainer must make any desired c
 |---|---|
 | Runnable fixture demo | Verified with Docker Compose, migrations, 24 invented issues and health checks |
 | Protected reviews and durable audit | Browser and HTTP saves verified; history/count changes and PostgreSQL restart persistence verified |
-| Automated checks | 74 tests passed, including eight PostgreSQL integration tests; identity/permission/import flows and free-cloud startup configuration checked |
+| Automated checks | **101 tests passed, including 12 PostgreSQL cases**; report in `evidence/ai-label-tests.xml` covers concurrency and lifecycle checks. Earlier 74-test hosting report is historical. |
+| Automatic AI labels | Five configurable label groups, persistent cache, confidence routing, and active-session continuation implemented; actual Groq key/call and quality assessment remain owner verification. |
 | GitHub authentication | Device and fine-grained-token flows implemented; encrypted credential persistence, expiry/logout, role checks, isolation, and mocked end-to-end imports tested. Live App setup/sign-in remains owner verification. |
 | Real ingestion | 2,999 VS Code issues plus a separate 1,165-issue Streamlit pilot imported; PRs excluded; pilot was rejected for classification |
 | Real classification | 1,123 usable VS Code snapshots; chronological test macro-F1 **0.5446** vs majority **0.2847**; accuracy **0.6923** vs majority **0.7456** |
@@ -139,7 +140,7 @@ Model training, dataset preparation, activation, and evaluation remain explicit 
 
 ### Database and audit design
 
-The twelve tables are `repositories`, `issues`, `snapshots`, `predictions`, `reviews`, `similarity_judgments`, `experiments`, `import_runs`, `auth_sessions`, `device_logins`, `repository_access`, and `connection_jobs`.
+The fifteen tables include `label_analyses`, `label_assignments`, `label_reviews`, and the existing `repositories`, `issues`, `snapshots`, `predictions`, `reviews`, `similarity_judgments`, `experiments`, `import_runs`, `auth_sessions`, `device_logins`, `repository_access`, and `connection_jobs`.
 
 Source labels, model suggestions, and human decisions are stored separately. Snapshots preserve the text and labels used for a decision. Predictions record the snapshot, input hash, model version, scores, and time. Reviews append a decision, note, configured reviewer identity, submission key, and revision.
 
@@ -152,6 +153,9 @@ See [architecture](docs/ARCHITECTURE.md) and [design decisions](docs/DECISIONS.m
 ```text
 triagedesk/
 ├── src/triagedesk/
+│   ├── ai_labels.py           # Hosted LLM, validation, cache, bounded analysis
+│   ├── triage.py              # Label queries, uncertainty routing, human reviews
+│   ├── issue_lifecycle.py     # Purge remotely closed connected issues
 │   ├── api.py                 # HTTP endpoints, authorization, and errors
 │   ├── authentication.py      # GitHub identity, encryption, sessions, role checks
 │   ├── connection_routes.py   # Sign-in and repository connection endpoints
@@ -175,7 +179,8 @@ triagedesk/
 │   ├── fixtures.py            # Invented demonstration reports
 │   ├── config.py              # Environment-based settings
 │   └── cli.py                 # Administrative command entrypoint
-├── ui/app.py                  # Streamlit application
+├── ui/app.py                  # Streamlit API client
+├── ui/workspace.py            # Main and hierarchical label tabs
 ├── ui/community_app.py        # Free cloud entrypoint with a private API
 ├── ui/requirements.txt        # Base package install for Community Cloud
 ├── ui/account.py              # Sign-in, repository connection, import progress
@@ -199,6 +204,8 @@ triagedesk/
 Generated datasets and model caches belong in ignored runtime directories or Docker volumes. They are not part of the source repository.
 
 ## Data and machine learning
+
+The following classifier/retrieval results describe the separately evaluated historical pipeline. They are **not accuracy measurements for the new Groq multi-label workflow**. Its behavior and setup are documented in [AI_LABELS.md](docs/AI_LABELS.md).
 
 ### Data sources and preparation
 
@@ -278,7 +285,7 @@ docker compose up --build -d --wait
 
 Open [TriageDesk](http://localhost:8501) and [API documentation](http://localhost:8000/docs). Startup waits for PostgreSQL, applies Alembic migrations, idempotently seeds 24 synthetic issues and builds a small TF-IDF index. Data is not deleted. The demo is clearly labeled synthetic and its saved scores are illustrations, not trained-model results. The default source-only demo has no trained classifier for arbitrary new text; the new-text view reports that state explicitly. Use the separately provided real snapshot bundle or train a real model to enable classification.
 
-To save a local review, enter `local-demo-change-me` in the sidebar’s reviewer token field. This documented demonstration credential is for the loopback-bound local setup only. Open **Review queue → Inspect issue**, read the text and suggestion, inspect related reports, choose accept/correct/defer/skip and save. Without a prediction, choose correct to categorize manually. Dashboard counts use the latest completed decision on the current snapshot; defer and skip leave work awaiting review.
+To save a local review, enter `local-demo-change-me` in the sidebar’s reviewer token field. This documented demonstration credential is for the loopback-bound local setup only. Open **Issues**, select a row, and use **Adjust labels (optional)** to save a manual decision. The local fixture demo does not contact Groq automatically. Verified real mode with a Groq key enables automatic analysis and the uncertainty-focused review flow.
 
 ```sh
 docker compose logs api ui
@@ -320,7 +327,7 @@ docker compose run --rm api triagedesk predict
 docker compose run --rm api triagedesk index
 ```
 
-These are explicit private administrative CLI jobs. Maintainers can instead use the authenticated connection screen for bounded imports, synchronization, categorization, and indexing. Imports include open/closed issues, follow Link pagination, exclude PR objects, upsert by external ID and commit checkpoints with each persisted page. Limits count REST response objects, including excluded PRs. A ten-minute update-time overlap protects synchronization; a capped corpus stays marked partial. An anonymous rate-limit error preserves committed pages and reports when to retry. Audit sample size is bounded at 100 objects per early/recent cohort. Source deletions are not inferred from a partial traversal; after confirming an inaccessible/deleted source, use `triagedesk mark-unavailable <internal-issue-id>` and rebuild indexes. History remains.
+These are explicit private administrative CLI jobs. The authenticated connection screen imports active open issues and processes changes/closures, while these historical CLI imports include open/closed issues, follow Link pagination, exclude PR objects, upsert by external ID and commit checkpoints with each persisted page. Limits count REST response objects, including excluded PRs. A ten-minute update-time overlap protects synchronization; a capped corpus stays marked partial. An anonymous rate-limit error preserves committed pages and reports when to retry. Audit sample size is bounded at 100 objects per early/recent cohort. Source deletions are not inferred from a partial traversal; after confirming an inaccessible/deleted source, use `triagedesk mark-unavailable <internal-issue-id>` and rebuild indexes. History remains.
 
 Versioned label mapping is in `config/labels.v1.yaml`. VS Code uses `bug`, `feature-request`, and literal `*question`. Conflicts and unsupported labels are excluded from supervision, not forced into a class. All three chronological partitions must support the three categories or training refuses. A new download may differ from the frozen evaluation included here; it needs a new dataset and immutable model version. Do not retune or repartition to improve an existing test headline.
 
@@ -389,8 +396,9 @@ API_URL=http://localhost:8000 REVIEWER_TOKEN=local-demo-change-me uv run python 
 
 ### What was tested
 
-The updated PostgreSQL-enabled local run contains **74 passed tests**, with no failures or skips. Eight use actual PostgreSQL; other checks use in-memory SQLite, local components, or mocked external responses where appropriate.
+The version-0.3 run passed **101 tests, including 12 PostgreSQL cases**, with no failures or skips (`evidence/ai-label-tests.xml`); the previous 74-test result is preserved separately. The current checks include actual PostgreSQL; other checks use in-memory SQLite, local components, or mocked external responses where appropriate.
 
+- **AI labels:** structured provider output, exact label/evidence validation, confidence routing, persistent caching, failed-call backoff, stale source invalidation, custom taxonomy, closed-record purging, and competing PostgreSQL claims/reviews.
 - **Free-cloud startup:** mandatory PostgreSQL/secret configuration, forced GitHub authentication, inherited shared credentials removed, failed-start cleanup, and safe error messages. The entrypoint also passed a separate local UI/API startup check with PostgreSQL and two simulated visitors.
 - **Identity and access:** encrypted provider credentials, hashed sessions, expiry/logout, numeric GitHub identity, repository isolation, denied roles, revoked write access, device polling, malformed URLs, and concurrent import admission.
 - **Ingestion:** page traversal, PR exclusion, idempotent imports, failed-page rollback, partial collection status, preserved snapshots, API failures, and rate-limit handling.
@@ -401,7 +409,7 @@ The updated PostgreSQL-enabled local run contains **74 passed tests**, with no f
 
 Additional local checks covered an actual browser save, clean Docker startup from the extracted source, review survival after service/container restart, restoration into a new database, and the optional Linux CPU semantic container. Passing these checks establishes the tested software behavior, not model accuracy or user usefulness.
 
-The smoke script intentionally writes only to synthetic mode and refuses real data. Integration tests create isolated schemas in the dedicated test database and remove only their own generated schemas. CI uses a PostgreSQL service, mocked GitHub and no live token/model downloads. Local result: 74 passed; a remote GitHub Actions success must be checked after publication.
+The smoke script intentionally writes only to synthetic mode and refuses real data. Integration tests create isolated schemas in the dedicated test database and remove only their own generated schemas. CI uses a PostgreSQL service, mocked GitHub and no live token/model downloads. The current local result is in the version-0.3 report; remote GitHub Actions success must be checked after publication.
 
 ## API and configuration
 
@@ -499,6 +507,7 @@ Use a focused branch, keep generated data and secrets out of commits, and run th
 
 ## Documentation and limits
 
+- [AI activation, label cache, confidence policy, and upgrade](docs/AI_LABELS.md)
 - [Online hosting and verified GitHub connections](docs/HOSTING.md)
 - [GitHub upload instructions](docs/GITHUB_UPLOAD.md)
 - [Product brief and acceptance criteria](docs/PRODUCT_BRIEF.md)
@@ -516,3 +525,16 @@ The classification result is a **chronological retrospective evaluation using co
 ## License and attribution
 
 The project code is distributed under the [MIT license](LICENSE). Public issue text remains subject to its original authors' rights; the code license does not relicense that content. The optional MiniLM model has a separate Apache-2.0 license. Source links, data/model attribution, and the role of AI-assisted development are documented in [attribution](docs/ATTRIBUTION.md) and [interview preparation](docs/INTERVIEW_PREP.md).
+
+## AI-label API additions
+
+- `GET /triage/{repository_id}/summary`: current status counts and LLM label distribution.
+- `GET /triage/{repository_id}/issues`: bounded paging; status/group/label/title filters.
+- `GET /triage/issues/{issue_id}`: labels, evidence, current analysis, and review history.
+- `POST /triage/issues/{issue_id}/reviews`: authenticated, revision-checked, idempotent human labeling.
+- `PUT /triage/{repository_id}/taxonomy`: maintainer-only custom label names.
+- `POST /triage/{repository_id}/refresh`: rate-spaced synchronization/AI continuation for an active workspace.
+
+`GROQ_API_KEY` enables the hosted AI service. `AI_MODEL`, `AI_CONFIDENCE_THRESHOLD` (0.85), `AI_BATCH_SIZE` (5), `AI_REQUEST_INTERVAL` (10 seconds), and `AUTO_SYNC_SECONDS` (60) are optional settings. Community Cloud forwards them from its private Secrets configuration. Migration 0003 creates the new tables automatically at startup.
+
+![New tab-based review workspace — synthetic local preview](docs/screenshots/ai-review-queue.jpg)

@@ -119,10 +119,10 @@ class GitHubClient:
             )
         raise GitHubError("Retry budget exhausted")
 
-    def issue_pages(self, name, since=None):
+    def issue_pages(self, name, since=None, state="all", direction="asc"):
         name = valid_repository(name)
         path = f"/repos/{name}/issues"
-        params = {"state": "all", "sort": "updated", "direction": "asc", "per_page": 100}
+        params = {"state": state, "sort": "updated", "direction": direction, "per_page": 100}
         if since:
             params["since"] = aware(since).isoformat().replace("+00:00", "Z")
         while path:
@@ -186,7 +186,7 @@ def upsert_issue(session, repository, raw):
     return "imported" if is_new else ("updated" if old_snapshot_id != snapshot.id else "unchanged")
 
 
-def ingest(db_engine, name, limit=2000, incremental=False, client=None, progress=None):
+def ingest(db_engine, name, limit=2000, incremental=False, client=None, progress=None, active_only=False):
     name = valid_repository(name)
     if not 1 <= limit <= 100_000:
         raise ValueError("Import limit must be between 1 and 100000 response objects")
@@ -220,7 +220,12 @@ def ingest(db_engine, name, limit=2000, incremental=False, client=None, progress
                 session.flush()
                 run_id = run.id
             exhausted = False
-            for page, has_next in client.issue_pages(name, since):
+            pages = (
+                client.issue_pages(name, since, state="open", direction="desc")
+                if active_only and not incremental
+                else client.issue_pages(name, since)
+            )
+            for page, has_next in pages:
                 with session.begin():
                     repo = session.scalar(
                         select(Repository).where(Repository.id == repo_id).with_for_update()

@@ -62,3 +62,12 @@ Models live in `ARTIFACT_DIR/models/<version>` with Pipeline, baseline, mapping,
 - `ui/app.py`: interface; `cli.py`: explicit jobs.
 
 Streamlit simplifies delivery but reruns scripts and limits custom navigation/layout; the API remains independently testable. Exact retrieval and correlated latest-row queries are adequate at this size. Measure before adding an approximate index, read replicas, or asynchronous workers. Kubernetes, Kafka, a vector database, and LLM APIs are deliberately omitted.
+
+
+## Version 0.3 label workflow
+
+The public Streamlit UI calls authenticated FastAPI endpoints for current open-issue labels and summary counts. Connected workspace synchronization queues bounded Groq calls in the existing single-runner job. `label_analyses` caches the validated result per snapshot and analyzer key; `label_assignments` supports SQL filtering/aggregation; `label_reviews` stores auditable human overrides with optimistic revisions and idempotency keys. Repository JSON stores its configured taxonomy. The current schema has 15 tables and Alembic head 0003.
+
+Groq receives a bounded public-issue excerpt, source labels, and the taxonomy, with no GitHub or application-session credentials. The backend validates schema, allowed label/group combinations, score bounds, and supporting quotations. An explicit uncertainty flag, low minimum score, missing primary type, or truncated input routes the report to Needs review. Provider failures remain Waiting for AI. The UI uses state-tracked lazy tabs and loads bounded pages from SQL.
+
+Per-snapshot row claims and a unique cache constraint prevent duplicate concurrent calls. Global job admission serializes import/index/AI work. Active UI sessions request refreshes at a server-enforced interval; no always-running webhook worker is claimed. Synchronization deletes connected reports confirmed closed, including dependent local snapshots, analyses, and reviews. Historical private CLI imports retain closed reports for research.

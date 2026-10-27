@@ -20,7 +20,7 @@ Preserve `AUTH_ENCRYPTION_KEY` securely if restoring sessions from a database ba
 
 ## Restart and update behavior
 
-The API startup script applies migrations before accepting traffic. Migration `0002` adds the session, device-login, repository-access, and connection-job tables plus suggestion provenance fields. It preserves existing issue and review records.
+The API startup script applies migrations before accepting traffic. Migration `0003` adds per-repository label settings, persistent LLM analyses, label assignments, and human label reviews. It preserves existing issue, snapshot, and review records during migration. Authenticated synchronization subsequently purges reports confirmed closed, including their local dependent analysis/review history, according to the active-workspace retention policy.
 
 Local `docker compose down` retains named volumes. The database and artifact volumes persist across ordinary service recreation. For Community Cloud/Neon, database persistence depends on keeping the Neon project. Backend restarts discard temporary artifacts; rebuild TF-IDF through the connection form after restarting. For the optional paid Render setup, persistence depends on keeping its managed PostgreSQL instance and API disk attached.
 
@@ -28,10 +28,14 @@ A stopped import retains committed GitHub pages. Its expired lease is released b
 
 ## Capacity boundaries
 
-Use one API instance and one UI instance for this MVP. Web imports have a maximum 3,000-object request cap and one active import/index job per installation. Production synchronization is manually triggered through the connection screen. Very large corpora, multiple concurrent import workers, automatic scheduling, and sticky multi-instance UI sessions need additional engineering.
+Use one API instance and one UI instance for this MVP. Web imports have a maximum 3,000-object request cap and one active import/index job per installation. A signed-in, open workspace polls for updates about every 60 seconds; manual synchronization remains available. AI processing is limited to small batches and respects provider backoff. Very large corpora, multiple concurrent import workers, automatic scheduling, and sticky multi-instance UI sessions need additional engineering.
 
 The default image uses TF-IDF retrieval. Optional MiniLM execution has a larger package and memory footprint; verify its capacity on an appropriately sized backend instead of assuming the small default plan is sufficient.
 
 ## What has and has not been verified
 
 Local test reports and container checks belong in `evidence/`. Historical model quality is documented in [EVALUATION.md](EVALUATION.md). Authentication and repository jobs have dedicated automated tests with mocked GitHub responses and actual PostgreSQL integration checks. A GitHub App registration, a real maintainer sign-in, and a live cloud URL must be verified against the owner's accounts after provisioning; source preparation alone does not complete those steps.
+
+## Groq credentials and label persistence
+
+Keep `GROQ_API_KEY` in the private environment or Community Cloud Secrets. The default threshold is 0.85 and the batch size is five issues per pass. Groq free-plan limits can delay the queue. Cached AI output and human reviews live in PostgreSQL, so a transient app filesystem does not cause reanalysis of unchanged snapshots. See [AI_LABELS.md](AI_LABELS.md) for activation, policy, and model limitations.

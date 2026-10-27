@@ -373,3 +373,91 @@ def test_failed_provider_identity_cannot_create_session(github_client, database,
     assert github_client.post("/auth/token", json={"token": TOKEN}).status_code == 401
     with Session(database) as db:
         assert db.scalar(select(AuthSession)) is None
+
+
+def test_ai_views_and_settings_are_scoped_and_permission_checked(github_client, database, monkeypatch):
+    from triagedesk.ai_labels import DEFAULT_TAXONOMY
+
+    identity_provider(monkeypatch)
+    headers = login(github_client)
+    mine = grant(database)
+    other = grant(database, user_id=99, repo={**REPO, "id": 78, "full_name": "other/project"})
+    assert github_client.get(f"/triage/{mine}/summary").status_code == 401
+    assert github_client.get(f"/triage/{mine}/summary", headers=headers).status_code == 200
+    assert github_client.get(f"/triage/{other}/summary", headers=headers).status_code == 403
+    assert (
+        github_client.put(f"/triage/{other}/taxonomy", headers=headers, json=DEFAULT_TAXONOMY).status_code
+        == 403
+    )
+    org = {**REPO, "owner": {"id": 88, "type": "Organization"}}
+    identity_provider(monkeypatch, repo=org)
+    assert (
+        github_client.put(f"/triage/{mine}/taxonomy", headers=headers, json=DEFAULT_TAXONOMY).status_code
+        == 403
+    )
+    assert github_client.post(f"/triage/{mine}/refresh", headers=headers).status_code == 403
+
+
+def test_login_workspace_refresh_detects_new_issues_closures_and_reuses_ai_cache(
+    github_client, database, monkeypatch
+):
+    from sqlalchemy import func
+    from test_ai_labels import use_ai
+
+    from triagedesk.models import LabelAnalysis
+
+    identity_provider(monkeypatch)
+    calls = use_ai(monkeypatch)
+    phase, seen_queries = [0], []
+
+    def respond(request):
+        if request.url.path == "/repos/maintainer/project":
+            return httpx.Response(200, json=REPO)
+        seen_queries.append(dict(request.url.params))
+        rows = [raw_issue(1, title="API crashes", body="Previously worked.")]
+        if phase[0]:
+            rows = [
+                {**raw_issue(1, day=1), "state": "closed", "closed_at": utcnow().isoformat()},
+                raw_issue(2, day=1, title="API crashes", body="New report"),
+            ]
+        return httpx.Response(200, json=rows)
+
+    transport = httpx.MockTransport(respond)
+    monkeypatch.setattr(
+        connections,
+        "GitHubClient",
+        lambda **kw: GitHubClient(
+            client=httpx.Client(transport=transport, base_url="https://api.github.com")
+        ),
+    )
+    headers = login(github_client)
+    result = github_client.post("/connections", headers=headers, json={"repository": "maintainer/project"})
+    job = github_client.get("/connections/jobs/" + result.json()["id"], headers=headers).json()
+    assert job["status"] == "complete", job
+    repo_id = job["repository_id"]
+    assert len(calls) == 1
+    assert seen_queries[0]["state"] == "open" and seen_queries[0]["direction"] == "desc"
+    # A normal refresh inside the interval does not import or call AI again.
+    assert github_client.post(f"/triage/{repo_id}/refresh", headers=headers).json()["status"] == "idle"
+    with Session(database) as db:
+        last = db.get(ConnectionJob, job["id"])
+        last.created_at -= timedelta(minutes=2)
+        db.commit()
+    # The next login/periodic refresh sees the same issue and reuses its persisted analysis.
+    again = github_client.post(f"/triage/{repo_id}/refresh", headers=headers).json()
+    assert "id" in again
+    assert len(calls) == 1
+    phase[0] = 1
+    with Session(database) as db:
+        last = db.get(ConnectionJob, again["id"])
+        last.created_at -= timedelta(minutes=2)
+        db.commit()
+    updated = github_client.post(f"/triage/{repo_id}/refresh", headers=headers).json()
+    finished = github_client.get("/connections/jobs/" + updated["id"], headers=headers).json()
+    assert finished["status"] == "complete", finished
+    assert finished["result"]["closed_removed"] == 1
+    assert seen_queries[-1]["state"] == "all" and "since" in seen_queries[-1]
+    assert len(calls) == 2
+    with Session(database) as db:
+        assert list(db.scalars(select(Issue.number))) == [2]
+        assert db.scalar(select(func.count()).select_from(LabelAnalysis)) == 1

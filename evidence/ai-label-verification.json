@@ -1,0 +1,11 @@
+{
+  "scope": "Local tests with actual PostgreSQL and mocked GitHub/Groq responses",
+  "tests": 101,
+  "postgres_cases": 12,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "live_groq_call_verified": false,
+  "new_llm_accuracy_measured": false,
+  "hosted_deployment_updated": false
+}

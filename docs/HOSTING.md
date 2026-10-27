@@ -15,11 +15,17 @@ Provider details checked on **26 October 2026**. Select the free plans described
 | Appropriate use | Portfolio, project submission, small maintainer demo | Interview, short demonstration, testing with a friend |
 | Main limit | Free capacity, sleep/restart behavior, temporary app filesystem | Computer, Docker, internet, and tunnel must remain running |
 
+## Upgrade an already working deployment with AI labels
+
+Follow [the AI-label upgrade steps](AI_LABELS.md). Keep the same database URL, encryption key, Python 3.12, and `ui/community_app.py` entrypoint. Add your own `GROQ_API_KEY` in Streamlit's private Secrets settings and redeploy the updated source. Migration 0003 creates the persistent label cache and label-review tables automatically. The Groq Free plan has limited quotas; pending work waits and retries rather than inventing a result.
+
+For a first-time deployment, follow option A below, then enable the Groq key using that same upgrade section.
+
 ## Option A: Free cloud demo
 
 ### 1. Upload the updated project to GitHub
 
-Use the **updated** source folder containing this guide. Publish its contents at the root of a GitHub repository; do not publish a parent folder containing several project copies. See [GITHUB_UPLOAD.md](GITHUB_UPLOAD.md) if needed.
+Use the **updated** source folder containing this guide. Publish its contents at the rwoot of a GitHub repository; do not publish a parent folder containing several project copies. See [GITHUB_UPLOAD.md](GITHUB_UPLOAD.md) if needed.
 
 The repository must contain:
 
@@ -113,12 +119,12 @@ Each visitor signs in with their own account credential. Do not add a maintainer
 2. Paste `your-account/your-repository` or its canonical GitHub URL.
 3. Start with a fetch cap of **100–200** response objects to keep the free demo small.
 4. Choose **Verify maintainer and import issues** and watch progress.
-5. Select the connected repository. Open **Review queue** and filter by **bug**, **enhancement**, or **question**.
-6. Accept or correct a suggestion, save a note, and inspect its review history.
+5. Select the connected repository. Open **Issues**, choose a label-group tab and then a label. **Needs review** contains only uncertain AI results; completed human decisions appear in **Reviewed**.
+6. Review an uncertain result, adjust its labels if necessary, save a note, and inspect its review history.
 
-Pull requests are excluded; capped imports are partial. Clear source labels and text rules supply suggestions when no compatible trained classifier is installed. Ambiguous reports remain for manual categorization. These suggestions have no fabricated ML accuracy or probability. The default free setup uses TF-IDF related-issue search; it does not download MiniLM or train a classifier at startup.
+Pull requests are excluded; capped imports are partial. Initial connections fetch recently updated open issues. With a Groq key configured, the background job assigns multi-label AI suggestions and saves them in PostgreSQL. High-confidence results are auto-sorted; uncertain results need review. Without the key, reports stay Waiting for AI. The free setup retains TF-IDF related-issue search and does not download a large local model or train a classifier at startup.
 
-Later, use **Synchronize changes to an already connected repository** in the connection form. To extend a partial historical import, increase the cap and run another full import. Only one import/index job runs at a time. Synchronization is manual, not a GitHub webhook subscription.
+While a signed-in workspace is open, it checks for changes about every 60 seconds and continues pending AI batches. You can also use **Synchronize changes to an already connected repository** in the connection form. To extend a partial collection, increase the cap and run another full import. One job runs at a time. Closures detected during synchronization purge the issue and its local analysis/review history from PostgreSQL. This is active-session polling rather than a webhook subscription; sleeping free hosting delays detection.
 
 ### 7. Optional: Enable the GitHub sign-in button
 
@@ -135,11 +141,11 @@ This implementation uses device authorization and needs no callback route, clien
 
 ### Free-demo persistence and limits
 
-- **Issues, snapshots, predictions, review history, and job progress:** stored in Neon and retained across app reboots, as long as you keep the database/project. Back up important data; the free allowance is finite.
+- **Open issues, snapshots, AI analyses, review history, and job progress:** stored in Neon and retained across app reboots, as long as you keep the project. Detected closed issues and their dependent local records are purged. Back up important data; the free allowance is finite.
 - **Credentials:** remain encrypted in Neon. Preserve `AUTH_ENCRYPTION_KEY`; changing it makes existing encrypted credentials unreadable and requires a new sign-in.
 - **Browser sign-in state:** may reset after refresh, sleep, or restart. Sign in again.
-- **Search indexes and any uploaded models:** live in a temporary directory and can disappear when the backend restarts. Re-run a connection synchronization/full import to rebuild TF-IDF search from database issues. Historical evaluation artifacts are not bundled into this deployment.
-- **Interrupted import:** committed pages remain in PostgreSQL. After the three-minute job lease expires, retry from the connection form. Sleep/restart does not automatically restart a worker.
+- **Search indexes and any uploaded models:** live in a temporary directory and can disappear when the backend restarts. The next automatic synchronization, or a manual connection sync, rebuilds TF-IDF search from database issues. Saved AI label analyses remain in Neon and do not need repeating. Historical evaluation artifacts are not bundled into this deployment.
+- **Interrupted import:** committed pages remain in PostgreSQL. After the three-minute job lease expires, retry from the connection form. Pending work resumes when a signed-in workspace is open again.
 - **Capacity:** one Streamlit app and one private API process share free capacity. Start with a small backlog, avoid the optional semantic dependencies, and avoid training or benchmarking in the cloud app. Availability and resource limits belong to the providers; this is a small demonstration setup.
 
 ### Check your hosted demo
@@ -200,7 +206,7 @@ Press **Ctrl+C** in the tunnel terminal to remove the public link. You can then 
 | Cannot reach the API on Community Cloud | Deploy **`ui/community_app.py`**, not the separate-service `ui/app.py`. Reboot after updating secrets. |
 | Sign-in button is missing | Token login works first. Add a real GitHub App Client ID and enable its device flow for the optional button. |
 | Identity verified but repository refused | Confirm actual maintainer rights, token/App repository selection, Issues: read, and any organization approval. |
-| Empty review queue | Check the repository has issues, the import completed, and the filters/repository selection match. |
+| Empty Needs review tab | This is normal when AI is confident or issues were already reviewed. Check Issues → Waiting for AI for pending work and verify the Groq key/quota. |
 | Related search unavailable after reboot | Sign in and run repository synchronization/full import to rebuild the temporary index. |
 | Import interrupted or busy | Wait for the three-minute lease to expire and retry; completed pages remain saved. |
 | GitHub quota exhausted | Wait for GitHub's reset, then retry the import. |
@@ -214,3 +220,5 @@ For backup and recovery details, see [DEPLOYMENT.md](DEPLOYMENT.md). For evaluat
 The full local suite passed **74 tests**, including **eight PostgreSQL integration tests** (`evidence/free-hosting-tests.xml`). A separate Linux container check ran `ui/community_app.py` against actual PostgreSQL, rendered the token sign-in page, confirmed `MODE=real` and `AUTH_MODE=github`, rejected unauthenticated workspace data with HTTP 401, and reused the same private backend for two simulated visitors (`evidence/free-hosting-smoke.json`). Lint, formatting, and Alembic drift checks passed.
 
 These checks used local PostgreSQL, not a live Neon project or Community Cloud deployment. Real provider-account setup and maintainer sign-in remain the final verification steps in your accounts.
+
+The version-0.3 label workflow and its current verification are described in [AI_LABELS.md](AI_LABELS.md). Earlier free-hosting evidence above predates that upgrade.

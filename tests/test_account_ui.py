@@ -4,15 +4,32 @@ from pathlib import Path
 import httpx
 from streamlit.testing.v1 import AppTest
 
+from triagedesk.ai_labels import DEFAULT_TAXONOMY
 
-def test_signin_connect_progress_queue_and_logout(monkeypatch):
-    """Exercise UI state transitions without a live identity provider or exposing credentials."""
-    connected = False
+
+def test_signin_connect_tabs_uncertain_review_and_logout(monkeypatch):
+    """Exercise the tab workflow against a mocked API; never contact live providers."""
+    connected, reviewed = False, False
     real_client = httpx.Client
+    taxonomy_hash = "a" * 64
+    label_queries = []
 
     def respond(request):
-        nonlocal connected
+        nonlocal connected, reviewed
         path = request.url.path
+        item = {
+            "id": 1,
+            "number": 1,
+            "title": "API crashes",
+            "source_url": "https://github.com/maintainer/project/issues/1",
+            "state": "open",
+            "status": "reviewed" if reviewed else "needs_review",
+            "confidence": 0.6,
+            "snapshot_id": 1,
+            "review_revision": int(reviewed),
+            "analysis_id": 1,
+            "labels": [{"group": "type", "name": "bug", "confidence": 0.6}],
+        }
         if path == "/meta":
             data = {
                 "auth_mode": "github",
@@ -20,6 +37,7 @@ def test_signin_connect_progress_queue_and_logout(monkeypatch):
                 "writes_enabled": True,
                 "github_browser_login": False,
                 "token_login": True,
+                "ai_configured": True,
             }
         elif path == "/auth/token":
             assert json.loads(request.content)["token"] == "ui-test-credential"
@@ -36,42 +54,72 @@ def test_signin_connect_progress_queue_and_logout(monkeypatch):
             data = [{"id": 1, "full_name": "maintainer/project"}] if connected else []
         elif path == "/connections" and request.method == "POST":
             assert request.headers["authorization"] == "Bearer opaque-application-session"
-            assert json.loads(request.content)["repository"] == "maintainer/project"
             connected = True
             data = {"id": "job-one"}
         elif path == "/connections":
-            data = (
-                [
-                    {
-                        "full_name": "maintainer/project",
-                        "role": "owner",
-                        "verified_at": "2026-10-26T00:00:00Z",
-                        "last_synced_at": "2026-10-26T00:00:00Z",
-                        "partial": False,
-                    }
-                ]
-                if connected
-                else []
-            )
+            data = []
         elif path == "/connections/jobs/job-one":
             data = {
                 "id": "job-one",
                 "repository_name": "maintainer/project",
                 "status": "complete",
-                "stage": "Ready to review",
+                "stage": "Ready",
                 "result": {
-                    "categorization": {
-                        "categories": {"bug": 2, "enhancement": 1},
-                        "methods": {"source_label": 3},
-                        "needs_manual_category": 0,
-                    },
+                    "ai_labels": {"configured": True, "analyzed": 1},
                     "import": {"status": "complete"},
                 },
             }
-        elif path == "/issues":
-            data = {"items": [], "total": 0, "page": 1, "page_size": 10}
+        elif path == "/triage/1/refresh":
+            data = {"status": "idle"}
+        elif path == "/triage/1/summary":
+            data = {
+                "counts": {
+                    "auto_sorted": 0,
+                    "needs_review": int(not reviewed),
+                    "reviewed": int(reviewed),
+                    "pending": 0,
+                },
+                "total": 1,
+                "partial": False,
+                "labels": {g: {n: int(n == "bug") for n in names} for g, names in DEFAULT_TAXONOMY.items()},
+                "taxonomy": DEFAULT_TAXONOMY,
+                "taxonomy_hash": taxonomy_hash,
+                "ai_configured": True,
+                "threshold": 0.85,
+                "model": "test-model",
+            }
+        elif path == "/triage/1/issues":
+            label_queries.append(dict(request.url.params))
+            expected = request.url.params.get("status")
+            items = [item] if expected in ("all", item["status"]) else []
+            data = {"items": items, "total": len(items), "page": 1, "page_size": 20}
+        elif path == "/triage/issues/1":
+            data = {
+                **item,
+                "repository_id": 1,
+                "body": "The API crashes on launch.",
+                "source_labels": [],
+                "taxonomy": DEFAULT_TAXONOMY,
+                "taxonomy_hash": taxonomy_hash,
+                "history": [],
+                "analysis": {
+                    "status": "complete",
+                    "model": "test",
+                    "summary": "Crash report",
+                    "explanation": "Crash described",
+                    "confidence": 0.6,
+                    "uncertain": False,
+                    "labels": [],
+                },
+            }
+        elif path == "/issues/1/related":
+            data = {"items": []}
+        elif path == "/triage/issues/1/reviews":
+            assert json.loads(request.content)["labels"][0] == {"group": "type", "name": "bug"}
+            reviewed = True
+            data = {"id": 1, "revision": 1}
         else:
-            raise AssertionError("Unexpected UI API path " + path)
+            raise AssertionError("Unexpected API path: " + path)
         return httpx.Response(200, json=data)
 
     monkeypatch.setattr(
@@ -80,21 +128,30 @@ def test_signin_connect_progress_queue_and_logout(monkeypatch):
     app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "ui/app.py"))
     app.run(timeout=10)
     assert not app.exception
-    assert any(field.label == "GitHub token" for field in app.text_input)
-    next(field for field in app.text_input if field.label == "GitHub token").set_value("ui-test-credential")
-    next(button for button in app.button if button.label == "Verify GitHub identity").click().run(timeout=10)
+    next(f for f in app.text_input if f.label == "GitHub token").set_value("ui-test-credential")
+    next(b for b in app.button if b.label == "Verify GitHub identity").click().run(timeout=10)
     assert not app.exception
-    next(field for field in app.text_input if field.label == "Public repository").set_value(
-        "maintainer/project"
+    assert {"Overview", "Issues", "Needs review", "Reviewed", "Connect repository"}.issubset(
+        {t.label for t in app.tabs}
     )
-    next(
-        button for button in app.button if button.label == "Verify maintainer and import issues"
-    ).click().run(timeout=10)
+    next(f for f in app.text_input if f.label == "Public repository").set_value("maintainer/project")
+    next(b for b in app.button if b.label == "Verify maintainer and import issues").click().run(timeout=10)
     assert not app.exception
-    assert any("Imported and ready" in message.value for message in app.success)
-    next(button for button in app.button if button.label == "Open review queue").click().run(timeout=10)
+    app.session_state["workspace_tabs"] = "Needs review"
+    app.run(timeout=10)
+    app.session_state["selected_issue"] = 1
+    app.session_state["selected_repository"] = 1
+    app.run(timeout=10)
     assert not app.exception
-    assert app.radio(key="navigation").value == "Review queue"
-    next(button for button in app.button if button.label == "Sign out").click().run(timeout=10)
+    next(b for b in app.button if b.label == "Save reviewed labels").click().run(timeout=10)
+    assert not app.exception and reviewed
+    assert any("moved to the Reviewed tab" in message.value for message in app.success)
+    app.session_state["workspace_tabs"] = "Issues"
+    app.session_state["browse_group"] = "Module"
+    app.session_state["labels_1_scope"] = "API"
+    app.run(timeout=10)
     assert not app.exception
-    assert any(field.label == "GitHub token" for field in app.text_input)
+    assert label_queries[-1]["group"] == "scope" and label_queries[-1]["label"] == "API"
+    next(b for b in app.button if b.label == "Sign out").click().run(timeout=10)
+    assert not app.exception
+    assert any(f.label == "GitHub token" for f in app.text_input)

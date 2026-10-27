@@ -1,7 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     api_url: str = "http://localhost:8000"
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     embedding_revision: str = "c9745ed1d9f207416be6d2e6f8de32d1f16199bf"
+    groq_api_key: SecretStr = SecretStr("")
+    ai_model: str = "qwen/qwen3.8-27b"
+    ai_confidence_threshold: float = Field(0.85, ge=0.5, le=1)
+    ai_batch_size: int = Field(5, ge=1, le=100)
+    ai_request_interval: float = Field(10, ge=0, le=60)
+    auto_sync_seconds: int = Field(60, ge=30, le=3600)
 
     def model_post_init(self, __context):
         if self.mode not in {"fixture", "real"}:

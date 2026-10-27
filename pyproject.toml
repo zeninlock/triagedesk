@@ -1,13 +1,13 @@
 [project]
 name = "triagedesk"
-version = "0.2.0"
+version = "0.3.0"
 description = "Human-reviewed GitHub issue triage with honest ML evaluation"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "fastapi>=0.118,<1", "uvicorn>=0.35,<1", "sqlalchemy>=2.0.44,<2.1",
   "alembic>=1.16,<2", "psycopg[binary]>=3.2,<4", "pydantic-settings>=2.10,<3",
   "httpx>=0.28,<1", "scikit-learn>=1.7,<2", "numpy>=2.2,<3",
-  "joblib>=1.5,<2", "streamlit>=1.50,<2", "pandas>=2.3,<3", "pyyaml>=6,<7",
+  "joblib>=1.5,<2", "streamlit>=1.66,<2", "pandas>=2.3,<3", "pyyaml>=6,<7",
   "cryptography>=46,<48"
 ]
 [project.optional-dependencies]

@@ -1327,7 +1327,7 @@ wheels = [
 
 [[package]]
 name = "triagedesk"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
@@ -1376,7 +1376,7 @@ requires-dist = [
     { name = "scikit-learn", specifier = ">=1.7,<2" },
     { name = "sentence-transformers", marker = "extra == 'semantic'", specifier = ">=5.1,<6" },
     { name = "sqlalchemy", specifier = ">=2.0.44,<2.1" },
-    { name = "streamlit", specifier = ">=1.50,<2" },
+    { name = "streamlit", specifier = ">=1.66,<2" },
     { name = "torch", marker = "sys_platform == 'linux' and extra == 'semantic'", specifier = ">=2.8,<3", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torch", marker = "sys_platform != 'linux' and extra == 'semantic'", specifier = ">=2.8,<3" },
     { name = "uvicorn", specifier = ">=0.35,<1" },

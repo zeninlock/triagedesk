@@ -12,12 +12,17 @@ def test_community_forces_github_auth_and_drops_shared_credentials(tmp_path, mon
     monkeypatch.setenv("REVIEWER_TOKEN", "inherited-demo-token")
     monkeypatch.setenv("GITHUB_TOKEN", "inherited-provider-token")
     env = backend_environment(
-        {"DATABASE_URL": "postgresql://user:password@db/example", "AUTH_ENCRYPTION_KEY": "k" * 48},
+        {
+            "DATABASE_URL": "postgresql://user:password@db/example",
+            "AUTH_ENCRYPTION_KEY": "k" * 48,
+            "GROQ_API_KEY": "free-provider-test-key",
+        },
         tmp_path,
     )
     assert env["MODE"] == "real" and env["AUTH_MODE"] == "github"
     assert env["REVIEWER_TOKEN"] == env["GITHUB_TOKEN"] == ""
     assert env["ARTIFACT_DIR"] == str(tmp_path)
+    assert env["GROQ_API_KEY"] == "free-provider-test-key"
 
 
 @pytest.mark.parametrize(

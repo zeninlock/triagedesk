@@ -40,3 +40,10 @@ Engineering QA improvements: queue Inspect button now navigates directly to deta
 - New imports can use your optional GITHUB_TOKEN; no credentials are required for the existing fixture demo or already collected local evidence.
 
 The stronger portfolio version remains incomplete until those external/human evidence steps occur. Exact frozen model inputs and retrieval-pool text stay in the separate artifact/data deliverable, not the source repository.
+
+
+## Version 0.3 — 27 October 2026
+
+Implemented automatic Groq multi-label classification, PostgreSQL cache/claims, per-repository taxonomies, label distribution charts, hierarchical tabs, uncertainty-only review, and a separate Reviewed view. Active workspaces poll for source changes and continue bounded AI batches. Confirmed closures purge the issue and its local dependent records. Initial live imports request recently updated open issues; historical CLI imports retain open/closed behavior.
+
+Verified 101 local tests including 12 PostgreSQL cases, migration preservation, and synthetic browser navigation. The source update requires deployment and an owner-supplied GROQ_API_KEY for actual provider calls. No new classification accuracy or live provider success is claimed.

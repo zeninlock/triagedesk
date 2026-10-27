@@ -139,34 +139,21 @@ def connections_page(meta, api):
                         job["error"] or "Import could not finish. Retry to continue from saved progress."
                     )
                 else:
-                    st.success("Imported and ready to review. Select the repository in the sidebar.")
+                    st.success("Imported and organized. Open the Issues or Needs review tab.")
                     result = job.get("result", {})
-                    counts = result.get("categorization", {})
-                    cols = st.columns(3)
-                    for col, category in zip(cols, ["bug", "enhancement", "question"]):
-                        col.metric(category.capitalize(), counts.get("categories", {}).get(category, 0))
+                    counts = result.get("ai_labels", {})
                     st.caption(
-                        f"{counts.get('needs_manual_category', 0)} issues need a manual category. Saved human decisions always take precedence."
+                        f"{counts.get('analyzed', 0)} analyzed · {counts.get('cached', 0)} cached analyses reused · {result.get('closed_removed', 0)} closed issues removed"
                     )
-                    sources = {
-                        "source_label": "existing GitHub labels",
-                        "rules": "text rules",
-                        "trained_model": "a trained model",
-                    }
-                    st.caption(
-                        "Suggestions: "
-                        + ", ".join(
-                            f"{count} from {sources.get(method, method)}"
-                            for method, count in counts.get("methods", {}).items()
-                        )
-                    )
+                    if not counts.get("configured"):
+                        st.info("AI labeling will start after the installation owner adds a Groq API key.")
                     if result.get("import", {}).get("status") == "limited":
                         st.warning(
                             "The fetch limit was reached. This is a partial collection; increase the limit and run a full import to include more history."
                         )
                     st.button(
-                        "Open review queue",
-                        on_click=lambda: st.session_state.update(navigation="Review queue"),
+                        "Open needs review",
+                        on_click=lambda: st.session_state.update(workspace_tabs="Needs review"),
                     )
 
         show_progress()
@@ -187,7 +174,5 @@ def connections_page(meta, api):
     else:
         st.info("Connect a repository to create your first workspace.")
     st.caption(
-        "A compatible trained classifier is used for its own repository when installed. Otherwise, clear GitHub "
-        "labels and unscored text rules provide suggestions. Ambiguous reports remain for manual categorization. "
-        "These fallback suggestions have no measured ML accuracy and require review. Synchronization is manual."
+        "New issues are analyzed automatically; completed results are reused from PostgreSQL. Only uncertain results need review. While a workspace is open, synchronization also checks for new and closed issues."
     )

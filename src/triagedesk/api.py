@@ -4,7 +4,7 @@ import logging
 import time
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -12,6 +12,8 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from triagedesk import triage
+from triagedesk.ai_labels import GROUPS, taxonomy_for, validate_taxonomy
 from triagedesk.authentication import Principal, authorize_repository_write, principal_for, require_connection
 from triagedesk.config import settings
 from triagedesk.connection_routes import Actor
@@ -38,7 +40,7 @@ from triagedesk.schemas import (
 )
 
 app = FastAPI(
-    title="TriageDesk", version="0.2.0", description="Human-reviewed triage. GitHub operations are read-only."
+    title="TriageDesk", version="0.3.0", description="Human-reviewed triage. GitHub operations are read-only."
 )
 app.include_router(connection_router)
 log = logging.getLogger("triagedesk")
@@ -133,7 +135,7 @@ def ready(db: DB):
         db.execute(text("SELECT 1"))
         db.execute(select(Repository.id).limit(1))
         version = db.execute(text("SELECT version_num FROM alembic_version")).scalar()
-        if version != "0002":
+        if version != "0003":
             raise HTTPException(503, "Database migration required")
     except SQLAlchemyError:
         raise HTTPException(503, "Database unavailable or migrations missing") from None
@@ -153,6 +155,9 @@ def meta():
         "connection_limit": 3000,
         "scores": "Model scores are not calibrated probabilities",
         "github_writes": False,
+        "ai_configured": bool(settings().groq_api_key.get_secret_value()),
+        "ai_confidence_threshold": settings().ai_confidence_threshold,
+        "auto_sync_seconds": settings().auto_sync_seconds,
     }
 
 
@@ -337,3 +342,160 @@ def import_status(db: DB, actor: Actor):
         }
         for run, name in rows
     ]
+
+
+def triage_repository(db, repository_id, actor):
+    require_connection(db, actor, repository_id)
+    repo = db.get(Repository, repository_id)
+    if not repo or repo.synthetic != (settings().mode == "fixture"):
+        raise HTTPException(404, "Repository not found")
+    return repo
+
+
+@app.get("/triage/{repository_id}/summary")
+def label_summary(repository_id: int, db: DB, actor: Actor):
+    return triage.summary(db, triage_repository(db, repository_id, actor))
+
+
+@app.get("/triage/{repository_id}/issues")
+def labeled_issues(
+    repository_id: int,
+    db: DB,
+    actor: Actor,
+    status: Literal["all", "auto_sorted", "needs_review", "reviewed", "pending"] = "all",
+    group: str | None = Query(None, max_length=30),
+    label: str | None = Query(None, max_length=100),
+    search: str = Query("", max_length=200),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
+    repo = triage_repository(db, repository_id, actor)
+    if (group and group not in GROUPS) or (label and label not in taxonomy_for(repo).get(group, [])):
+        raise HTTPException(422, "Choose a label in one of the five groups")
+    return triage.list_labeled_issues(db, repo, status, group, label, search, page, page_size)
+
+
+@app.get("/triage/issues/{issue_id}")
+def labeled_issue_detail(issue_id: int, db: DB, actor: Actor):
+    issue = active_issue(db, issue_id, actor)
+    repo = triage_repository(db, issue.repository_id, actor)
+    rows = db.execute(triage.scope(repo).where(Issue.id == issue_id)).mappings().all()
+    if not rows:
+        raise HTTPException(404, "The issue is closed or unavailable")
+    result = triage.labels_for_rows(db, rows)[0]
+    result.update(
+        body=issue.body,
+        source_labels=issue.labels,
+        taxonomy=taxonomy_for(repo),
+        taxonomy_hash=triage.digest(taxonomy_for(repo)),
+    )
+    analysis = db.get(triage.LabelAnalysis, result["analysis_id"]) if result["analysis_id"] else None
+    result["analysis"] = (
+        {
+            "model": analysis.model,
+            "labels": analysis.labels,
+            "created_at": analysis.created_at,
+            "confidence": analysis.confidence,
+            "uncertain": analysis.uncertain,
+            "status": analysis.status,
+            "summary": analysis.summary,
+            "explanation": analysis.explanation,
+        }
+        if analysis
+        else None
+    )
+    result["history"] = [
+        {
+            "labels": row.labels,
+            "note": row.note,
+            "reviewer": row.reviewer,
+            "created_at": row.created_at,
+            "snapshot_id": row.snapshot_id,
+        }
+        for row in db.scalars(
+            select(triage.LabelReview)
+            .where(triage.LabelReview.issue_id == issue_id)
+            .order_by(triage.LabelReview.id.desc())
+            .limit(100)
+        )
+    ]
+    result["history"].extend(
+        {
+            "labels": [{"group": "type", "name": row.category}] if row.category else [],
+            "note": row.note,
+            "reviewer": row.reviewer,
+            "created_at": row.created_at,
+            "snapshot_id": row.snapshot_id,
+        }
+        for row in db.scalars(
+            select(Review).where(Review.issue_id == issue_id).order_by(Review.id.desc()).limit(100)
+        )
+    )
+    result["history"].sort(key=lambda row: row["created_at"].timestamp(), reverse=True)
+    result["history"] = result["history"][:100]
+    return result
+
+
+@app.post("/triage/issues/{issue_id}/reviews", status_code=201)
+def review_labels(
+    issue_id: int, payload: triage.LabelReviewInput, db: DB, reviewer: Annotated[str, Depends(writer)]
+):
+    actor = reviewer if isinstance(reviewer, Principal) else None
+    issue = active_issue(db, issue_id, actor)
+    repo = triage_repository(db, issue.repository_id, actor)
+    if actor:
+        authorize_repository_write(db, actor, repo.id)
+        reviewer = f"github:{actor.login}#{actor.github_user_id}"
+    review = triage.save_label_review(db, issue, repo, payload, reviewer)
+    return {"id": review.id, "revision": review.revision, "labels": review.labels}
+
+
+@app.put("/triage/{repository_id}/taxonomy")
+def update_label_taxonomy(
+    repository_id: int, payload: dict, db: DB, reviewer: Annotated[str, Depends(writer)]
+):
+    actor = reviewer if isinstance(reviewer, Principal) else None
+    repo = triage_repository(db, repository_id, actor)
+    if actor:
+        authorize_repository_write(db, actor, repo.id)
+    try:
+        repo.label_taxonomy = validate_taxonomy(payload)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
+    db.commit()
+    return {"taxonomy": repo.label_taxonomy}
+
+
+@app.post("/triage/{repository_id}/refresh", status_code=202)
+def refresh_workspace(repository_id: int, tasks: BackgroundTasks, db: DB, actor: Actor):
+    from datetime import timedelta
+
+    from triagedesk.authentication import verify_maintainer
+    from triagedesk.connections import expire_jobs, job_output, run_job, start_job
+    from triagedesk.github import aware
+    from triagedesk.models import ConnectionJob, utcnow
+
+    if not actor:
+        raise HTTPException(403, "Automatic synchronization requires GitHub sign-in")
+    if settings().read_only:
+        raise HTTPException(403, "This installation is read-only")
+    repo = triage_repository(db, repository_id, actor)
+    expire_jobs(db)
+    active = db.scalar(select(ConnectionJob).where(ConnectionJob.active_key == "import"))
+    if active:
+        if active.github_user_id == actor.github_user_id and active.repository_id == repository_id:
+            return job_output(active)
+        return {"status": "busy"}
+    latest = db.scalar(
+        select(ConnectionJob.created_at)
+        .where(ConnectionJob.repository_id == repository_id)
+        .order_by(ConnectionJob.created_at.desc())
+        .limit(1)
+    )
+    if latest and aware(latest) + timedelta(seconds=settings().auto_sync_seconds) > utcnow():
+        return {"status": "idle"}
+    metadata, role = verify_maintainer(actor, repo.full_name)
+    job, created = start_job(db, actor, repo.full_name, metadata, role, 3000, True)
+    if created:
+        tasks.add_task(run_job, job.id)
+    return job_output(job)

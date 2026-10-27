@@ -17,9 +17,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from triagedesk import db as database
+from triagedesk.ai_labels import analyze_repository
 from triagedesk.authentication import Principal, decrypt, verify_maintainer
 from triagedesk.auto_categories import categorize
 from triagedesk.github import GitHubClient, GitHubError, aware, ingest
+from triagedesk.issue_lifecycle import purge_closed
 from triagedesk.models import AuthSession, ConnectionJob, Repository, RepositoryAccess, utcnow
 from triagedesk.retrieval import build_index
 
@@ -144,13 +146,20 @@ def run_job(job_id):
             limit,
             incremental=incremental,
             client=client,
+            active_only=True,
             progress=lambda counts: touch(job_id, "Fetching actual GitHub issues", {"import": counts}),
         )
         touch(job_id, "Categorizing imported issues", {"import": imported})
         with Session(database.engine(), expire_on_commit=False) as db:
             job = db.get(ConnectionJob, job_id)
             repository = db.get(Repository, job.repository_id)
+            removed = purge_closed(db, repository.id)
             categories = categorize(db, repository)
+        touch(job_id, "Assigning AI labels", {"closed_removed": removed})
+        ai_result = analyze_repository(
+            database.engine(), repository.id, progress=lambda: touch(job_id, "Assigning AI labels")
+        )
+        touch(job_id, "Saving AI labels", {"ai_labels": ai_result})
         touch(job_id, "Building related-report search", {"categorization": categories})
         with Session(database.engine(), expire_on_commit=False) as db:
             index = build_index(db)

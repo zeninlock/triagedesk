@@ -26,6 +26,8 @@ def config(tmp_path, monkeypatch):
     monkeypatch.setenv("REVIEWER_NAME", "test-maintainer")
     monkeypatch.setenv("ARTIFACT_DIR", str(tmp_path / "artifacts"))
     monkeypatch.setenv("GITHUB_TOKEN", "")
+    monkeypatch.setenv("GROQ_API_KEY", "")
+    monkeypatch.setenv("AI_REQUEST_INTERVAL", "0")
     settings.cache_clear()
     yield
     settings.cache_clear()

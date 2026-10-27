@@ -1,3 +1,16 @@
+# Current version-0.3 demo
+
+1. Deploy the updated source, configure a Groq Free key in hosting secrets, and sign in as a real public-repository maintainer. Use AI_LABELS.md for activation.
+2. Connect a small public repository with open reports. Watch import/AI progress and open Overview to inspect Auto-sorted, Needs review, Reviewed, and Waiting for AI counts.
+3. Open Issues, choose a group such as Type or Module, and select a label tab. Select a report row to see its text, AI explanation, confidence, and exact supporting quotations.
+4. Inspect a genuinely uncertain result in Needs review. Save a checked label decision and confirm the report leaves that queue and appears in Reviewed. If none are uncertain, explain the cutoff instead of inventing an evaluation result.
+5. Refresh/log in again and show the saved result. Explain that PostgreSQL caches each snapshot/model/prompt/taxonomy analysis and that optional labels can be omitted when evidence is absent.
+6. If demonstrating closure, close only an issue you are authorized to close on GitHub, keep the workspace open, and wait for the next synchronization to remove its local records. The application itself never closes an issue on GitHub.
+
+Provider requests can be delayed by free quotas. No new multi-label accuracy or productivity result is claimed. Screenshots marked synthetic use invented label values purely for UI verification.
+
+## Historical version-0.2 demonstration notes
+
 # Three-to-five-minute demonstration
 
 0:00–0:35 — Explain the maintainer’s assumed problem and the import → suggestion → review workflow. Point out fixture versus real mode. Describe discovery as hypotheses until the study occurs.

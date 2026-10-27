@@ -95,3 +95,12 @@ The current production blueprint was validated against Render's official schema.
 The free Community Cloud entrypoint runs the API on loopback in the same installation as Streamlit, while an external PostgreSQL database supplies durable storage. It forces real/GitHub mode and excludes inherited shared provider/reviewer tokens. The full local suite now has 74 passing tests, including eight PostgreSQL integration tests (`evidence/free-hosting-tests.xml`). A separate non-root Linux container check with actual PostgreSQL rendered the sign-in UI for two simulated visitors, reused a single private backend, and returned HTTP 401 for unauthenticated workspace data (`evidence/free-hosting-smoke.json`). Lint, formatting, and migration-drift checks passed.
 
 No live Streamlit Community Cloud, Neon connection, new GitHub sign-in, or cloud performance result is claimed by these local checks. Follow HOSTING.md to configure the owner's accounts and complete hosted verification. Historical classifier and retrieval measurements above are unchanged.
+
+
+## Version 0.3: automatic LLM labels and lifecycle fixes
+
+On 27 October 2026, the local suite passed **101 tests**, including **12 actual PostgreSQL cases**, with zero failures, errors, or skips. Provider/identity payloads are mocked. The checks cover exact label/evidence validation, confidence/uncertainty routing, cached analysis reuse, provider backoff, source/taxonomy invalidation, scoped permissions, closed-issue deletion, atomic concurrent claims/reviews, and tab navigation. See `evidence/ai-label-tests.xml` and `evidence/ai-label-verification.json`.
+
+A separate PostgreSQL migration check upgrades an existing 0002 issue/snapshot/review to 0003 without losing them (`evidence/ai-migration-check.json`). Browser checks use explicitly synthetic reports and illustrative scores; the new group/label tabs, direct row selection, and distinct Needs review/Reviewed views were inspected (`evidence/ai-label-ui-check.json`, screenshots in `docs/screenshots/`).
+
+There is no measured accuracy, calibrated probability, real Groq inference result, or new hosted deployment result for the multi-label workflow. The default 0.85 cutoff is a model-reported confidence policy, not 85% empirical correctness. Existing classifier metrics above remain historical and are not reused as LLM-quality evidence.

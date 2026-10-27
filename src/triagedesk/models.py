@@ -40,6 +40,7 @@ class Repository(Base):
     checkpoint: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     meta_etag: Mapped[str | None] = mapped_column(String(300))
     partial: Mapped[bool] = mapped_column(Boolean, default=True)
+    label_taxonomy: Mapped[dict | None] = mapped_column(JSON)
 
 
 class Issue(Base):
@@ -234,6 +235,67 @@ class ConnectionJob(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     lease_until: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class LabelAnalysis(Base):
+    __tablename__ = "label_analyses"
+    __table_args__ = (
+        UniqueConstraint("snapshot_id", "analyzer_key", name="uq_analysis_snapshot_analyzer"),
+        CheckConstraint("status IN ('running','complete','failed')", name="ck_analysis_status"),
+        CheckConstraint(
+            "confidence IS NULL OR (confidence >= 0 AND confidence <= 1)", name="ck_analysis_score"
+        ),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    issue_id: Mapped[int] = mapped_column(ForeignKey("issues.id"), index=True)
+    snapshot_id: Mapped[int] = mapped_column(ForeignKey("snapshots.id"), index=True)
+    analyzer_key: Mapped[str] = mapped_column(String(64))
+    model: Mapped[str] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(20))
+    labels: Mapped[list] = mapped_column(JSON, default=list)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    explanation: Mapped[str] = mapped_column(Text, default="")
+    confidence: Mapped[float | None] = mapped_column(Float)
+    uncertain: Mapped[bool] = mapped_column(Boolean, default=True)
+    error: Mapped[str | None] = mapped_column(String(100))
+    retry_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    claim_token: Mapped[str | None] = mapped_column(String(36))
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class LabelReview(Base):
+    __tablename__ = "label_reviews"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    issue_id: Mapped[int] = mapped_column(ForeignKey("issues.id"), index=True)
+    snapshot_id: Mapped[int] = mapped_column(ForeignKey("snapshots.id"), index=True)
+    analysis_id: Mapped[int | None] = mapped_column(ForeignKey("label_analyses.id"))
+    taxonomy_hash: Mapped[str] = mapped_column(String(64))
+    labels: Mapped[list] = mapped_column(JSON)
+    note: Mapped[str] = mapped_column(Text, default="")
+    reviewer: Mapped[str] = mapped_column(String(100))
+    revision: Mapped[int] = mapped_column(Integer)
+    idempotency_key: Mapped[str] = mapped_column(String(100), unique=True)
+    payload_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class LabelAssignment(Base):
+    __tablename__ = "label_assignments"
+    __table_args__ = (
+        UniqueConstraint("issue_id", "origin", "group", "name", name="uq_issue_origin_label"),
+        CheckConstraint("origin IN ('ai','human')", name="ck_label_origin"),
+        Index("ix_label_group_name", "group", "name"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    issue_id: Mapped[int] = mapped_column(ForeignKey("issues.id"), index=True)
+    snapshot_id: Mapped[int] = mapped_column(ForeignKey("snapshots.id"))
+    analysis_id: Mapped[int | None] = mapped_column(ForeignKey("label_analyses.id"))
+    review_id: Mapped[int | None] = mapped_column(ForeignKey("label_reviews.id"))
+    origin: Mapped[str] = mapped_column(String(10))
+    group: Mapped[str] = mapped_column(String(30))
+    name: Mapped[str] = mapped_column(String(100))
+    confidence: Mapped[float | None] = mapped_column(Float)
 
 
 @event.listens_for(Snapshot, "before_update")

@@ -1,6 +1,6 @@
 x-backend: &backend
   build: .
-  image: triagedesk:0.2-local
+  image: triagedesk:0.3-local
   env_file: .env
   environment: &backend-env
     DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-triagedesk}:${POSTGRES_PASSWORD:-triagedesk}@db:5432/${POSTGRES_DB:-triagedesk}
@@ -48,7 +48,7 @@ services:
       retries: 15
   ui:
     build: .
-    image: triagedesk:0.2-local
+    image: triagedesk:0.3-local
     environment:
       API_URL: http://api:8000
     command: ["streamlit", "run", "ui/app.py", "--server.address=0.0.0.0", "--server.port=8501"]
