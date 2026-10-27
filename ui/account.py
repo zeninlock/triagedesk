@@ -89,6 +89,15 @@ def connections_page(meta, api):
     if not meta.get("writes_enabled"):
         st.info("The installation owner has disabled imports and review writes.")
         return
+    if meta.get("ai_configured"):
+        st.caption(
+            "Groq key loaded by the backend. Waiting issues will be analyzed while a workspace is open."
+        )
+    else:
+        st.info(
+            "The backend has not loaded a Groq API key. The installation owner can add GROQ_API_KEY "
+            "in Streamlit Secrets, save, then refresh the app."
+        )
     with st.form("connect-repository"):
         repository = st.text_input(
             "Public repository",
@@ -143,10 +152,13 @@ def connections_page(meta, api):
                     result = job.get("result", {})
                     counts = result.get("ai_labels", {})
                     st.caption(
-                        f"{counts.get('analyzed', 0)} analyzed · {counts.get('cached', 0)} cached analyses reused · {result.get('closed_removed', 0)} closed issues removed"
+                        f"During this import: {counts.get('analyzed', 0)} analyzed · {counts.get('cached', 0)} cached analyses reused · {result.get('closed_removed', 0)} closed issues removed"
                     )
-                    if not counts.get("configured"):
-                        st.info("AI labeling will start after the installation owner adds a Groq API key.")
+                    if meta.get("ai_configured") and not counts.get("configured"):
+                        st.info(
+                            "This import ran before AI was enabled. Pending issues will be processed "
+                            "automatically while a workspace is open."
+                        )
                     if result.get("import", {}).get("status") == "limited":
                         st.warning(
                             "The fetch limit was reached. This is a partial collection; increase the limit and run a full import to include more history."

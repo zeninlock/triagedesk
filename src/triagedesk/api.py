@@ -40,7 +40,7 @@ from triagedesk.schemas import (
 )
 
 app = FastAPI(
-    title="TriageDesk", version="0.3.0", description="Human-reviewed triage. GitHub operations are read-only."
+    title="TriageDesk", version="0.3.1", description="Human-reviewed triage. GitHub operations are read-only."
 )
 app.include_router(connection_router)
 log = logging.getLogger("triagedesk")

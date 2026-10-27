@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import httpx
+import pytest
 from streamlit.testing.v1 import AppTest
 
 from triagedesk.ai_labels import DEFAULT_TAXONOMY
@@ -155,3 +156,44 @@ def test_signin_connect_tabs_uncertain_review_and_logout(monkeypatch):
     next(b for b in app.button if b.label == "Sign out").click().run(timeout=10)
     assert not app.exception
     assert any(f.label == "GitHub token" for f in app.text_input)
+
+
+@pytest.mark.parametrize("current_configured", [True, False])
+@pytest.mark.parametrize("import_configured", [True, False])
+def test_import_notice_uses_current_backend_status(current_configured, import_configured):
+    ui_path = str(Path(__file__).resolve().parents[1] / "ui")
+    app = AppTest.from_string(
+        f"""
+import sys
+sys.path.insert(0, {ui_path!r})
+import streamlit as st
+from account import connections_page
+
+def api(path):
+    assert path == '/connections'
+    return []
+
+connections_page({{
+    'auth_mode': 'github', 'writes_enabled': True,
+    'ai_configured': st.session_state['current_configured'],
+}}, api)
+"""
+    )
+    app.session_state["current_configured"] = current_configured
+    app.session_state["connection_job"] = "old-import"
+    app.session_state["connection_result"] = {
+        "id": "old-import",
+        "repository_name": "maintainer/project",
+        "status": "complete",
+        "result": {"ai_labels": {"configured": import_configured, "analyzed": 0}},
+    }
+    app.run(timeout=10)
+    assert not app.exception
+    captions = [item.value for item in app.caption]
+    messages = [item.value for item in app.info]
+    assert any("Groq key loaded by the backend" in item for item in captions) == current_configured
+    assert any("has not loaded a Groq API key" in item for item in messages) == (not current_configured)
+    assert any("This import ran before AI was enabled" in item for item in messages) == (
+        current_configured and not import_configured
+    )
+    assert any("During this import: 0 analyzed" in item for item in captions)

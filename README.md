@@ -8,6 +8,8 @@ The lightweight hosted application calls **Groq's free-plan API** rather than do
 
 Version 0.3 adds the AI label cache, nested label tabs, repository-specific label settings, automatic active-session synchronization, and removal of issues confirmed closed. See [the AI activation and upgrade guide](docs/AI_LABELS.md) and [free hosting](docs/HOSTING.md).
 
+Version **0.3.1** fixes Streamlit secret changes leaving the backend with an old Groq configuration, plus stale missing-key notices from earlier imports. See [key-loading troubleshooting](docs/SECRETS_TROUBLESHOOTING.md).
+
 ## Contents
 
 - [Connect your repository](#connect-your-repository)
@@ -95,7 +97,7 @@ Priority and contributor labels are suggestions supported by the supplied report
 |---|---|
 | Runnable fixture demo | Verified with Docker Compose, migrations, 24 invented issues and health checks |
 | Protected reviews and durable audit | Browser and HTTP saves verified; history/count changes and PostgreSQL restart persistence verified |
-| Automated checks | **101 tests passed, including 12 PostgreSQL cases**; report in `evidence/ai-label-tests.xml` covers concurrency and lifecycle checks. Earlier 74-test hosting report is historical. |
+| Automated checks | **118 tests passed, including 12 PostgreSQL cases**; report in `evidence/secrets-fix-tests.xml` includes configuration-change and stale-notice regressions. Earlier reports are preserved. |
 | Automatic AI labels | Five configurable label groups, persistent cache, confidence routing, and active-session continuation implemented; actual Groq key/call and quality assessment remain owner verification. |
 | GitHub authentication | Device and fine-grained-token flows implemented; encrypted credential persistence, expiry/logout, role checks, isolation, and mocked end-to-end imports tested. Live App setup/sign-in remains owner verification. |
 | Real ingestion | 2,999 VS Code issues plus a separate 1,165-issue Streamlit pilot imported; PRs excluded; pilot was rejected for classification |
@@ -387,7 +389,7 @@ The copied `.env` points to PostgreSQL on localhost:5433. `API_URL` defaults to 
 ```sh
 uv run ruff check src ui tests
 uv run ruff format --check src ui tests alembic
-uv run pytest -q                     # eight PG tests skip if TEST_DATABASE_URL is unset
+uv run pytest -q                     # twelve PG tests skip if TEST_DATABASE_URL is unset
 docker compose exec db createdb -U triagedesk triagedesk_test  # once; skip if it already exists
 TEST_DATABASE_URL=postgresql+psycopg://triagedesk:triagedesk@localhost:5433/triagedesk_test uv run pytest -q
 uv run alembic check
@@ -396,10 +398,10 @@ API_URL=http://localhost:8000 REVIEWER_TOKEN=local-demo-change-me uv run python 
 
 ### What was tested
 
-The version-0.3 run passed **101 tests, including 12 PostgreSQL cases**, with no failures or skips (`evidence/ai-label-tests.xml`); the previous 74-test result is preserved separately. The current checks include actual PostgreSQL; other checks use in-memory SQLite, local components, or mocked external responses where appropriate.
+The version-0.3.1 run passed **118 tests, including 12 PostgreSQL cases**, with no failures or skips (`evidence/secrets-fix-tests.xml`). Earlier 101-test and 74-test reports are preserved separately. The current checks include actual PostgreSQL; other checks use in-memory SQLite, local components, or mocked external responses where appropriate.
 
 - **AI labels:** structured provider output, exact label/evidence validation, confidence routing, persistent caching, failed-call backoff, stale source invalidation, custom taxonomy, closed-record purging, and competing PostgreSQL claims/reviews.
-- **Free-cloud startup:** mandatory PostgreSQL/secret configuration, forced GitHub authentication, inherited shared credentials removed, failed-start cleanup, and safe error messages. The entrypoint also passed a separate local UI/API startup check with PostgreSQL and two simulated visitors.
+- **Free-cloud startup:** mandatory PostgreSQL/secret configuration, forced GitHub authentication, inherited shared credentials removed, failed-start cleanup, safe errors, changed-secret restarts, concurrent visitors, and current versus historical import notices. The entrypoint also passed a local PostgreSQL smoke check for adding, replacing, and removing dummy Groq keys, changed thresholds, shared visitors, and child cleanup (`evidence/secrets-fix-smoke.json`).
 - **Identity and access:** encrypted provider credentials, hashed sessions, expiry/logout, numeric GitHub identity, repository isolation, denied roles, revoked write access, device polling, malformed URLs, and concurrent import admission.
 - **Ingestion:** page traversal, PR exclusion, idempotent imports, failed-page rollback, partial collection status, preserved snapshots, API failures, and rate-limit handling.
 - **ML:** label conflicts, unsupported labels, chronological boundaries, exact/near duplicate screening, training-only preprocessing, save/load consistency, and threshold metrics.
@@ -409,7 +411,7 @@ The version-0.3 run passed **101 tests, including 12 PostgreSQL cases**, with no
 
 Additional local checks covered an actual browser save, clean Docker startup from the extracted source, review survival after service/container restart, restoration into a new database, and the optional Linux CPU semantic container. Passing these checks establishes the tested software behavior, not model accuracy or user usefulness.
 
-The smoke script intentionally writes only to synthetic mode and refuses real data. Integration tests create isolated schemas in the dedicated test database and remove only their own generated schemas. CI uses a PostgreSQL service, mocked GitHub and no live token/model downloads. The current local result is in the version-0.3 report; remote GitHub Actions success must be checked after publication.
+The smoke script intentionally writes only to synthetic mode and refuses real data. Integration tests create isolated schemas in the dedicated test database and remove only their own generated schemas. CI uses a PostgreSQL service, mocked GitHub and no live token/model downloads. The current local result is in the version-0.3.1 report; remote GitHub Actions success must be checked after publication.
 
 ## API and configuration
 

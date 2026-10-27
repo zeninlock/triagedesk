@@ -19,6 +19,8 @@ Provider details checked on **26 October 2026**. Select the free plans described
 
 Follow [the AI-label upgrade steps](AI_LABELS.md). Keep the same database URL, encryption key, Python 3.12, and `ui/community_app.py` entrypoint. Add your own `GROQ_API_KEY` in Streamlit's private Secrets settings and redeploy the updated source. Migration 0003 creates the persistent label cache and label-review tables automatically. The Groq Free plan has limited quotas; pending work waits and retries rather than inventing a result.
 
+If you already saved the Groq key but still see a missing-key notice, install the **0.3.1 secrets fix** and follow [these troubleshooting steps](SECRETS_TROUBLESHOOTING.md). The old helper could retain a backend started before the key was added; an old import result could also show stale setup status.
+
 For a first-time deployment, follow option A below, then enable the Groq key using that same upgrade section.
 
 ## Option A: Free cloud demo

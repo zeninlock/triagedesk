@@ -47,3 +47,9 @@ The stronger portfolio version remains incomplete until those external/human evi
 Implemented automatic Groq multi-label classification, PostgreSQL cache/claims, per-repository taxonomies, label distribution charts, hierarchical tabs, uncertainty-only review, and a separate Reviewed view. Active workspaces poll for source changes and continue bounded AI batches. Confirmed closures purge the issue and its local dependent records. Initial live imports request recently updated open issues; historical CLI imports retain open/closed behavior.
 
 Verified 101 local tests including 12 PostgreSQL cases, migration preservation, and synthetic browser navigation. The source update requires deployment and an owner-supplied GROQ_API_KEY for actual provider calls. No new classification accuracy or live provider success is claimed.
+
+## Version 0.3.1 — 27 October 2026
+
+Fixed the Community Cloud helper retaining a private backend with obsolete secrets. One thread-safe manager now checks supported configuration on each full app run, stops the previous child before replacement, and shares the current child across visitors. The connection notice reads current API setup status instead of the flag recorded by an earlier import; counts are explicitly historical.
+
+Verified 118 local tests including 12 PostgreSQL cases. A separate entrypoint smoke check uses actual API processes and isolated PostgreSQL to verify adding, replacing, and removing dummy keys, threshold updates, process reuse, and cleanup. Live Groq calls and the user's hosted deployment were not tested. The owner must publish the updated source and reboot the hosted app once.

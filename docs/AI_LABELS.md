@@ -2,6 +2,8 @@
 
 TriageDesk uses Groq's hosted API to label imported public GitHub issues. Labels are stored inside TriageDesk, as requested; this version never writes labels back to GitHub. The existing GitHub token/App permissions remain read-only.
 
+**Key saved but still shown as missing?** Version 0.3.1 refreshes the private backend when supported secrets change and uses current setup status instead of an old import result. Follow [the secrets troubleshooting steps](SECRETS_TROUBLESHOOTING.md) to update and reboot an existing deployment.
+
 ## Enable it on your existing free deployment
 
 1. Replace the deployed repository's source with this updated version, including `src/`, `ui/`, `alembic/`, `pyproject.toml`, and `uv.lock`.
