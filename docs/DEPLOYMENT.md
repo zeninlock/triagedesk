@@ -32,9 +32,9 @@ Use one API instance and one UI instance for this MVP. Web imports have a maximu
 
 The default image uses TF-IDF retrieval. Optional MiniLM execution has a larger package and memory footprint; verify its capacity on an appropriately sized backend instead of assuming the small default plan is sufficient.
 
-## What has and has not been verified
+## Deployment checks
 
-Local test reports and container checks belong in `evidence/`. Historical model quality is documented in [EVALUATION.md](EVALUATION.md). Authentication and repository jobs have dedicated automated tests with mocked GitHub responses and actual PostgreSQL integration checks. A GitHub App registration, a real maintainer sign-in, and a live cloud URL must be verified against the owner's accounts after provisioning; source preparation alone does not complete those steps.
+After an update, confirm that sign-in, repository import, AI analysis, and saving a review work against the deployed database. Reboot the app and confirm that saved decisions remain available. Tests and local container checks complement these deployment checks.
 
 ## Groq credentials and label persistence
 

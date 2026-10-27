@@ -1,83 +1,95 @@
-# Automatic AI labels — version 0.3
+# AI labeling
 
-TriageDesk uses Groq's hosted API to label imported public GitHub issues. Labels are stored inside TriageDesk, as requested; this version never writes labels back to GitHub. The existing GitHub token/App permissions remain read-only.
+TriageDesk uses Groq to label imported public GitHub issues. Results and maintainer decisions are stored in PostgreSQL; the app does not write labels back to GitHub.
 
-**Key saved but still shown as missing?** Version 0.3.1 refreshes the private backend when supported secrets change and uses current setup status instead of an old import result. Follow [the secrets troubleshooting steps](SECRETS_TROUBLESHOOTING.md) to update and reboot an existing deployment.
+## Enable automatic labeling
 
-**Issues remain Waiting for AI?** Version 0.3.2 shows actual queued/running/failed states, provider error reasons, retry times, and a **Run AI now** action that skips GitHub import and search rebuilding. See [AI progress and recovery](AI_WAITING.md).
+For local development, add your key to the ignored `.env` file:
 
-**Successful calls but few saved analyses?** Version 0.3.3 fixes the rejected-output loop. It saves usable uncertain suggestions for review and pauses automatic retries of unusable responses. See [validation recovery](AI_VALIDATION_FIX.md).
+```dotenv
+GROQ_API_KEY=your_groq_api_key
+AI_MODEL=qwen/qwen3.8-27b
+AI_CONFIDENCE_THRESHOLD=0.85
+AI_BATCH_SIZE=5
+AI_REQUEST_INTERVAL=10
+AUTO_SYNC_SECONDS=60
+```
 
-**High confidence but no labels?** Version 0.3.4 replaces free-form evidence quotations with numbered source references, retaining clear classifications without changing the confidence cutoff. Old empty quote-rejected results are eligible for automatic recovery. See [label references](AI_LABEL_REFERENCES.md).
+Apply the settings with `docker compose up -d --wait`.
 
-## Enable it on your existing free deployment
+For Streamlit Community Cloud, put the same settings in **App settings → Secrets** using TOML syntax. Keep them at the top level, alongside `DATABASE_URL` and `AUTH_ENCRYPTION_KEY`:
 
-1. Replace the deployed repository's source with this updated version, including `src/`, `ui/`, `alembic/`, `pyproject.toml`, and `uv.lock`.
-2. Create your own key in the [Groq console](https://console.groq.com/keys). Remain on its Free plan for the temporary demo. [Free-plan FAQ](https://community.groq.com/t/do-i-get-charged-for-anything-on-the-groq-free-plan/832); [current rate limits](https://console.groq.com/docs/rate-limits).
-3. In **Streamlit Community Cloud → App settings → Secrets**, keep your existing `DATABASE_URL`, `AUTH_ENCRYPTION_KEY`, and optional `GITHUB_CLIENT_ID`. Add these top-level settings:
+```toml
+GROQ_API_KEY = "your_groq_api_key"
+AI_MODEL = "qwen/qwen3.8-27b"
+AI_CONFIDENCE_THRESHOLD = 0.85
+AI_BATCH_SIZE = 5
+AI_REQUEST_INTERVAL = 10
+AUTO_SYNC_SECONDS = 60
+```
 
-   ```toml
-   GROQ_API_KEY = "YOUR_OWN_GROQ_KEY"
-   AI_MODEL = "qwen/qwen3.8-27b"
-   AI_CONFIDENCE_THRESHOLD = 0.85
-   AI_BATCH_SIZE = 5
-   ```
+Use one quoted, single-line API key. Reload or reboot the app after saving. The cloud entrypoint is `ui/community_app.py`; see [HOSTING.md](HOSTING.md).
 
-4. Save, deploy/reboot, and keep the entrypoint **`ui/community_app.py`**, with **Python 3.12**. The helper passes the Groq key only to the private backend. Never commit a populated secrets file.
-5. Startup applies migration **0003**. Keep your existing database and encryption key; do not reset either. This migration adds the label tables without discarding existing issues, snapshots, or human reviews.
-6. Sign in and select a connected repository. The app starts checking for changes and labeling pending issues automatically. For a first connection, use **Connect repository**. No trained model artifact, GPU, or local large-model download is required.
+Create a key in the [Groq console](https://console.groq.com/keys). The configured model must support [strict structured output](https://console.groq.com/docs/structured-outputs).
 
-The default Qwen model supports Groq's structured JSON output and non-thinking mode. It is currently a preview model; availability and account quotas can change. `AI_MODEL` can be changed to another model supporting strict JSON-schema responses. [Model documentation](https://console.groq.com/docs/model/qwen/qwen3.8-27b); [structured outputs](https://console.groq.com/docs/structured-outputs).
+## Label groups
 
-For local Docker, add the same values to the ignored `.env`, run `python3 scripts/setup-github-local.py`, then `docker compose up --build -d --wait` in the project root. Keep your selected project name/ports if you already use a separate local installation.
+| Group | Default labels |
+| --- | --- |
+| Type | bug, enhancement, documentation, question |
+| Priority | priority: high, priority: medium, priority: low, regression |
+| Module | billing, onboarding, UI/UX, API |
+| Contributor | good first issue, help wanted, easy |
+| Workflow | waiting for op's response, dependencies, CI |
 
-## What happens automatically
+Maintainers can customize labels in **Label settings**. A classification selects a primary type and any supported optional labels. The model receives the issue title, a bounded description, source labels, and the configured taxonomy. It does not fetch comment threads or inspect the repository's source code.
 
-1. The first connection fetches the most recently updated **open** issues, excluding pull requests.
-2. A background job sends each pending report's title, a bounded description excerpt, existing labels, and configured label names to Groq. GitHub credentials and application-session tokens are never included in the model input.
-3. The model returns a summary, explanation, allowed label IDs, numbered evidence references, confidence scores, and an uncertainty flag. The backend resolves those IDs to exact configured label names and actual source text. Unsupported references or duplicates require review; invalid required fields, scores, or response structures pause automatic retries.
-4. Each result is committed to PostgreSQL. The cache identity includes the source snapshot, model, prompt version, and label taxonomy. Reopening a page, logging in again, or restarting the cloud app reuses completed results.
-5. Results at or above the cutoff are **Auto-sorted**, provided the model did not mark them uncertain. A result below the cutoff, with an uncertain flag, without one primary type, or based on truncated issue text goes to **Needs review**.
-6. Saving a human decision moves that issue to **Reviewed** and removes it from **Needs review**. Human labels override AI labels; the original AI output and review history remain available for open issues. Previous completed reviews from version 0.2 are recognized too.
-7. While the selected workspace is open, the app checks for changes approximately every **60 seconds**. Synchronization includes closure events. When a closure is observed, the issue and its dependent snapshots, predictions, AI cache, reviews, and relationship judgments are **deleted from the connected workspace database**, following the requested retention policy. Other issues remain intact. A reopened report can be imported again.
+The model chooses label IDs and evidence references from supplied options. The backend inserts the corresponding source excerpt into the saved result, so evidence does not depend on the model reproducing a quotation exactly.
 
-The default is **five pending reports per pass**, with spacing between requests. Remaining reports are processed in later passes. GitHub/provider backoff, an active import, network delays, or sleeping free hosting can delay processing. This is browser-driven polling with bounded background jobs, not an always-running webhook service. It cannot observe closures while the app is asleep or no workspace is open; the next refresh checks again.
+## Confidence and review
 
-The private historical import/training CLI retains its original open/closed collection behavior for reproducible experiments. The active-workspace purge is performed by authenticated connection jobs.
+The effective confidence is the minimum of the overall score and selected label scores. The default cutoff is `0.85`.
 
-## Label groups and navigation
+- **Auto-sorted:** confidence meets the cutoff and no uncertainty or validation condition requires review.
+- **Needs review:** confidence is below the cutoff, the model marks the result uncertain, or the response lacks sufficient supported information.
+- **Reviewed:** a maintainer has saved a decision. Human labels take precedence.
+- **Waiting for AI:** analysis is pending.
+- **AI needs attention:** an attempt failed; the dashboard shows the reason and recovery guidance.
 
-| Group | Initial labels |
-|---|---|
-| Type / nature | bug, enhancement, documentation, question |
-| Priority / severity | priority: high, priority: medium, priority: low, regression |
-| Product / module | billing, onboarding, UI/UX, API |
-| Contributor level | good first issue, help wanted, easy |
-| Status / workflow | waiting for op's response, dependencies, CI |
+These are model-reported scores, not measured accuracy percentages. A high score does not bypass an explicit uncertainty flag.
 
-An issue has one primary type when the evidence supports it and any applicable optional labels. The model is instructed to omit unsupported optional groups. It does not assume every bug is high priority or every short report is easy. Contributor/workflow labels require supporting statements or existing labels; the app does not fetch entire comment threads to infer unstated workflow decisions.
+Open **Issues** to browse by label group and label. Select a row to inspect the explanation and evidence. Save an uncertain issue's labels in **Needs review** to move it to **Reviewed**.
 
-The main navigation is now clickable tabs: **Overview**, **Issues**, **Needs review**, **Reviewed**, **Connect repository**, and **Label settings**. In **Issues**, choose a label group and then a label in the nested tabs. Select an issue row to inspect it; no separate “Inspect issue” navigation button is needed.
+## Processing and persistence
 
-**Overview → How AI labeled the current issues** replaces Category signals. Its charts show the LLM's current-snapshot label distribution, including uncertain suggestions. Human changes are visible on the issue and in Reviewed. Closed reports and stale snapshots are excluded from these views.
+Initial imports and active-workspace synchronization start small analysis batches. Defaults are five issues per batch, ten seconds between provider requests, and a workspace sync check every sixty seconds. Processing continues while a signed-in workspace is open.
 
-**Label settings** lets a verified maintainer customize each repository's groups. Taxonomy changes invalidate the old classification cache for the current view; new results are generated using the new names. Previous decisions remain in history until the issue itself is purged on closure.
+Analyses are cached by snapshot, model, prompt version, and label taxonomy. Unchanged completed results are reused across sign-ins and app restarts. Editing issue content or changing label settings can require fresh analysis.
 
-## Confidence and failure behavior
+Saving a human review does not make another AI call. When a closure is detected during GitHub synchronization, the issue and its dependent local history are removed.
 
-`AI_CONFIDENCE_THRESHOLD=0.85` is a configurable operational cutoff. It is **not a claim of 85% measured correctness**. Scores are model-reported and uncalibrated. The effective confidence is the minimum of the overall score and the selected label scores. An explicit uncertainty flag always requires review, even with a high numeric score.
+## Troubleshooting
 
-Missing credentials and temporary provider failures leave reports pending. Rate-limit and network backoff are respected across issues. Malformed responses show **AI needs attention** and pause automatic retries; an explicit **Run AI now** action can make a fresh attempt. Structurally usable results with unsupported suggestions are saved as uncertain in **Needs review**, retaining only supported labels and a validation note. Such cases never claim a confident classification, and completed uncertain results are reused. The application keeps its source-label/rule classifier API for historical compatibility, but it does not present those results as LLM-generated labels in the new workspace.
+| Symptom | What to check |
+| --- | --- |
+| Key is reported missing | Confirm a top-level `GROQ_API_KEY` in Streamlit Secrets or `.env`, save it, and restart or reload the app. |
+| API key rejected | Replace the key in private settings and retry. |
+| Model unavailable or request rejected | Check the model name, account access, and support for strict JSON-schema output. |
+| Request or token limit reached | Wait for the retry time shown in the dashboard. Increasing batch size cannot bypass provider quotas. |
+| Network or provider failure | Keep the workspace open and wait for the scheduled retry. |
+| Malformed response | Use **Run AI now** for a fresh attempt, or review the issue manually. Automatic retries are paused for unusable responses. |
+| Suggested labels need review | Inspect the uncertainty explanation and supporting text; adjust and save the labels. |
 
-Pending work resumes when a signed-in user keeps a workspace open. Only one import/index/AI job runs per installation; per-snapshot claims and a unique database cache key prevent concurrent workers from analyzing the same snapshot twice. Session expiry or sign-out stops further job progress. Keep one application instance for this MVP.
+**Run AI now** processes pending analysis without importing GitHub issues or rebuilding search. It reuses completed analyses and respects active jobs and provider backoff. Five eligible reports include approximately forty seconds of deliberate spacing, plus provider and database time.
 
-## What has been verified
+The dashboard shows progress, failed attempts, and retry times. Provider failure logs use fixed reason codes rather than logging keys or raw provider response bodies.
 
-The current local suite passed **149 tests**, including **15 actual PostgreSQL cases** (`evidence/evidence-id-tests.xml`). Automated checks exercise source/label references, recovery of empty old results, retained valid caches, cached uncertainty, malformed-response pauses, confidence routing, filters, taxonomies, backoff, closure purging, repository isolation, and navigation. PostgreSQL checks include cache upgrades, competing claims/reviews, identical retries, and actual foreign-key deletion. Earlier reports and the separate version-0.2 migration preservation check remain available.
+## Dashboard examples
 
-Provider responses and GitHub identities are mocked in these tests; no live Groq credential or new multi-label accuracy result is claimed. The historical three-class classifier's F1 score does not describe this LLM workflow. Check real results on a small public repository after adding your own key, and evaluate a separate labeled sample before making accuracy claims.
+The following screenshots use synthetic demo issues.
 
+![Issues grouped by label](screenshots/ai-label-tabs.jpg)
 
-![Nested label navigation — synthetic local preview](screenshots/ai-label-tabs.jpg)
+![Uncertain results in Needs review](screenshots/ai-review-queue.jpg)
 
-![Separate reviewed view — synthetic local preview](screenshots/ai-reviewed-tab.jpg)
+![Completed decisions in Reviewed](screenshots/ai-reviewed-tab.jpg)

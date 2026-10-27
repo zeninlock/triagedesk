@@ -1,5 +1,4 @@
 {
-  "out": "../../work/runtime/retrieval-pool.json",
   "actual_queries": 39,
   "methods": [
     "semantic",

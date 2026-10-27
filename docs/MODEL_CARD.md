@@ -1,4 +1,6 @@
-# Model card — vscode-tfidf-v1
+# Offline classifier model card — vscode-tfidf-v1
+
+This card describes the optional scikit-learn classifier. The dashboard's automatic multi-label analysis uses Groq; see [AI_LABELS.md](AI_LABELS.md).
 
 **Status:** implemented, trained and evaluated locally on real public snapshots, saved/reload-verified and served locally. Not validated with maintainers or hosted in the cloud. Intended use: assist a person triaging VS Code-style public software reports; no automatic source actions.
 

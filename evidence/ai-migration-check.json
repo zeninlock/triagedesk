@@ -1,9 +1,0 @@
-{
-  "scope": "Disposable local PostgreSQL database",
-  "from_revision": "0002",
-  "to_revision": "0003",
-  "existing_issue_preserved": true,
-  "existing_snapshot_preserved": true,
-  "existing_review_preserved": true,
-  "new_label_tables_created": true
-}

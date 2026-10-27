@@ -14,3 +14,16 @@ __pycache__
 .DS_Store
 triagedesk-real-data*.tar.gz
 triagedesk*.zip
+
+# Documentation and local verification output are not runtime inputs
+docs/
+evidence/
+.local-notes/
+test-results*.xml
+.coverage*
+htmlcov/
+*.pem
+*.key
+*.p12
+*.pfx
+.ssh/

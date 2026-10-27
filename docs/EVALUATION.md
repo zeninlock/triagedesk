@@ -1,6 +1,6 @@
-# Evaluation report — actual local measurements
+# Offline model evaluation
 
-Collected and tested 26 October 2026 (India time). Classification uses real VS Code snapshots. Fixture scores are excluded. Full machine-readable reports are in `evidence/`. No cloud or user-validation results are claimed.
+These results cover the optional scikit-learn classifier and related-issue retrieval experiments, collected on 26 October 2026. They do not measure the Groq multi-label workflow. Machine-readable reports are in [evidence/](../evidence/). Synthetic demo scores are excluded.
 
 ## Frozen classification evaluation
 
@@ -70,37 +70,31 @@ Hardware: macOS-15.3-arm64-arm-64bit, arm64, 8 logical CPUs. Native macOS Python
 
 First artifact-loading calls measured separately: classifier 28.9 ms; TF-IDF index/retrieval 119.3 ms; semantic model/retrieval 3274.1 ms. Package startup may already be partly warm. Semantic warm latency includes query encoding; corpus embedding generation is excluded. API measurements include local HTTP, SQL and serialization. These measurements meet the initial warm-latency targets in this environment; they do not establish performance on other hardware or under concurrent traffic.
 
-## Verification and reproducibility
+## Run an offline experiment
 
-46 automated tests passed locally, including five PostgreSQL integration tests, mocked GitHub failures/rate limits, chronological leakage guards, save/load consistency, stale/repeated/concurrent reviews, retrieval caching/self-exclusion and filtered SQL. CI is configured without live APIs or model downloads; no remote CI success is claimed. Docker fixture startup and protected save/history/dashboard changes passed. Saved fixture reviews survived database/API restart and a container recreation with the same volume. The real-data delivery was also restored into a new isolated database with matching table counts and verified model availability/read-only behavior (`evidence/backup-restore.json`). The Linux arm64 CPU image also served the real classifier and five semantic candidates as UID 10001 with a read-only artifact mount (`evidence/semantic-container-smoke.json`).
+With Python dependencies installed, PostgreSQL running, migrations applied, and `MODE=real`, use the CLI to collect issues and train a separate model version:
 
-Use README commands to import, freeze, train/evaluate and benchmark. Exact source snapshots, membership, mapping, seed, configuration and original dependency lock are persisted in the model artifact. A new GitHub download may differ and must receive a new dataset/model version. Do not rerun a changed test split to improve this headline.
+```sh
+uv run triagedesk import microsoft/vscode --limit 3000
+uv run triagedesk prepare microsoft/vscode --out data/dataset.json
+uv run triagedesk train data/dataset.json --version vscode-experiment-1
+uv run triagedesk evaluate vscode-experiment-1
+uv run triagedesk activate vscode-experiment-1
+uv run triagedesk predict
+uv run triagedesk index
+uv run triagedesk benchmark --requests 100
+```
 
-## Limits of the evidence
+Use a separate experimental database rather than an active connected workspace. Imports, dataset preparation, training, and indexing are administrative jobs. A new GitHub download can contain changed issue text or labels and must receive a new dataset and model version; it will not necessarily reproduce the recorded numbers.
 
-The main result is a **chronological retrospective evaluation using collected snapshots**. Text and labels may have changed after creation; historical training-label availability is not established. The import is a biased oldest-update-time slice of an old project period. Labels are noisy, model scores are uncalibrated, and cross-project/current-data performance is unknown. Retrieval quality, actual hosted availability, intended-user usability and feedback-driven improvement remain pending.
+Optional semantic retrieval requires `uv sync --frozen --extra semantic`, followed by `uv run triagedesk index --semantic --allow-download`. This explicitly downloads the pinned encoder. The default app does not require these dependencies or model weights.
 
+## Automated checks
 
-## Version 0.2 authentication and repository connection verification
+The tests cover authentication, repository permissions, import pagination and retries, AI response validation, caching, uncertainty routing, human reviews, issue closure, and related-issue filtering. Unit tests use simulated provider responses; PostgreSQL integration tests require a separate `TEST_DATABASE_URL`.
 
-The new GitHub-backed session, repository-role, scoped-workspace, import-job, and UI flows are tested separately from the historical classifier above. The current suite has 68 passing tests including eight PostgreSQL integration tests; see `evidence/hosted-upgrade-tests.xml`. Identity and permission responses are mocked in automated tests. Real hosted OAuth and owner-account verification remain pending owner setup.
+Run them with the development commands in the [README](../README.md). GitHub Actions publishes current test results as workflow artifacts; generated local test reports are excluded from source control.
 
-An additional read-only live API check fetched 50 VS Code response objects into an isolated database: 49 issues persisted and one PR was excluded. Source-label/text-rule suggestions categorized 33 reports (11 bug, 19 enhancement, 3 question); 16 remained for manual categorization. This is a functionality check, not an accuracy assessment. Twenty-three suggestions came from GitHub labels and ten from text rules, with no fabricated probability scores. Related search returned five candidates and excluded self. See `evidence/live-public-import-v02.json`.
+## Limitations
 
-The current production blueprint was validated against Render's official schema. The new local installation serves the sign-in screen and rejects unauthenticated workspace data requests. No cloud URL, user time saving, rule accuracy, or genuine relevance judgment is claimed.
-
-
-## Free temporary hosting update
-
-The free Community Cloud entrypoint runs the API on loopback in the same installation as Streamlit, while an external PostgreSQL database supplies durable storage. It forces real/GitHub mode and excludes inherited shared provider/reviewer tokens. The full local suite now has 74 passing tests, including eight PostgreSQL integration tests (`evidence/free-hosting-tests.xml`). A separate non-root Linux container check with actual PostgreSQL rendered the sign-in UI for two simulated visitors, reused a single private backend, and returned HTTP 401 for unauthenticated workspace data (`evidence/free-hosting-smoke.json`). Lint, formatting, and migration-drift checks passed.
-
-No live Streamlit Community Cloud, Neon connection, new GitHub sign-in, or cloud performance result is claimed by these local checks. Follow HOSTING.md to configure the owner's accounts and complete hosted verification. Historical classifier and retrieval measurements above are unchanged.
-
-
-## Version 0.3: automatic LLM labels and lifecycle fixes
-
-On 27 October 2026, the local suite passed **101 tests**, including **12 actual PostgreSQL cases**, with zero failures, errors, or skips. Provider/identity payloads are mocked. The checks cover exact label/evidence validation, confidence/uncertainty routing, cached analysis reuse, provider backoff, source/taxonomy invalidation, scoped permissions, closed-issue deletion, atomic concurrent claims/reviews, and tab navigation. See `evidence/ai-label-tests.xml` and `evidence/ai-label-verification.json`.
-
-A separate PostgreSQL migration check upgrades an existing 0002 issue/snapshot/review to 0003 without losing them (`evidence/ai-migration-check.json`). Browser checks use explicitly synthetic reports and illustrative scores; the new group/label tabs, direct row selection, and distinct Needs review/Reviewed views were inspected (`evidence/ai-label-ui-check.json`, screenshots in `docs/screenshots/`).
-
-There is no measured accuracy, calibrated probability, real Groq inference result, or new hosted deployment result for the multi-label workflow. The default 0.85 cutoff is a model-reported confidence policy, not 85% empirical correctness. Existing classifier metrics above remain historical and are not reused as LLM-quality evidence.
+This is a chronological retrospective evaluation using collected snapshots. Text and labels may have changed after issue creation, and the import is a capped, oldest-update-time sample. Source labels are noisy, scores are uncalibrated, and cross-project performance is unknown. Retrieval quality needs human relevance judgments. The classifier metrics above do not establish accuracy or time savings for the current Groq workflow.

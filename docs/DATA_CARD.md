@@ -1,6 +1,6 @@
 # Data card — collected 26 October 2026 (India time)
 
-**Primary supervised source:** [microsoft/vscode](https://github.com/microsoft/vscode/issues). Version: `dataset-66cb4613b0925284`. This is a partial, oldest-update-time collection, not a random sample or a current repository census. Collection URLs and counts are in `evidence/vscode-audit.json` and `evidence/vscode-import.json`. Full immutable inputs and split membership are in the separate local artifact bundle, outside the code repository.
+**Primary supervised source:** [microsoft/vscode](https://github.com/microsoft/vscode/issues). Version: `dataset-66cb4613b0925284`. This is a partial, oldest-update-time collection, not a random sample or a current repository census. Collection URLs and counts are in `evidence/vscode-audit.json` and `evidence/vscode-import.json`. Training inputs and split manifests are generated locally and are not included in this source repository.
 
 ## Repository selection
 
@@ -33,7 +33,7 @@ Current-label and cohort differences suggest different labeling practices, but d
 | Later exact/near text duplicates excluded | 0 |
 | Final supervised examples | 1,123 |
 
-Class counts: **666 bug, 305 enhancement, 152 question**. Target size was approximately 1,000–5,000 usable labeled issues; this collection reaches the lower end. Do not substitute the raw count of 2,999 for the supervised size.
+Class counts: **666 bug, 305 enhancement, 152 question**. The supervised dataset contains 1,123 examples; the larger import also includes unsupported and conflicting labels.
 
 Chronology is assigned before duplicate removal: 786 training, 168 validation, 169 test. Training supports: 430/267/89; validation: 110/24/34; test: 126/14/29, ordered bug/enhancement/question. Creation dates span November 2015–October 2017, even though the snapshots were downloaded in October 2026. The update-time collection cap is a further selection bias. Split dates are recorded exactly in the evaluation report.
 

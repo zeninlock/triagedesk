@@ -52,7 +52,7 @@ triagedesk/
 ├── tests/                  # Unit, API, and database tests
 ├── scripts/                # Setup, startup, and maintenance scripts
 ├── docs/                   # Setup guides and technical documentation
-├── evidence/               # Saved test and evaluation reports
+├── evidence/               # Offline dataset and model reports
 ├── .github/workflows/      # Continuous integration
 ├── .streamlit/             # Streamlit configuration and secrets example
 ├── .env.example            # Example local environment settings

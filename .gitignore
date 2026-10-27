@@ -38,3 +38,24 @@ data/
 # Separately distributed runtime bundle and source packages
 triagedesk-real-data*.tar.gz
 triagedesk*.zip
+
+# Local notes, generated verification reports, and private key files
+.local-notes/
+test-results*.xml
+evidence/*.xml
+evidence/*smoke*.json
+evidence/*verification*.json
+evidence/*check*.json
+evidence/*schema*.json
+evidence/clean-start.json
+evidence/compose-services.json
+evidence/live-public-import-v02.json
+evidence/backup-restore.json
+.coverage.*
+*.sqlite
+*.sqlite3
+*.pem
+*.key
+*.p12
+*.pfx
+.ssh/

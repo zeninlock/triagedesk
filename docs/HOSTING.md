@@ -1,228 +1,118 @@
-# Host TriageDesk temporarily for free
+# Hosting
 
-Use **Streamlit Community Cloud + Neon Free** for a public demo that works while your laptop is off. Both offer free plans; no Render deployment, paid disk, or GPU is needed. This guide also includes a **Cloudflare Quick Tunnel** for sharing a running local installation for a short session.
+TriageDesk can run on Streamlit Community Cloud with a PostgreSQL database in Neon. This runs independently of your laptop. A Cloudflare Quick Tunnel is another option for temporarily sharing an existing local installation.
 
-Provider details checked on **26 October 2026**. Select the free plans described here; the existing `render.yaml` provisions paid resources and is not used by either method below. This source update prepares deployment; it does not create your provider accounts or a hosted URL.
+## Streamlit Community Cloud and Neon
 
-## Choose your setup
+### 1. Prepare the repository
 
-| | Free cloud demo — recommended | Temporary link from your laptop |
-|---|---|---|
-| Services | Streamlit Community Cloud + Neon Free | Existing Docker installation + Cloudflare Quick Tunnel |
-| Laptop can be off? | Yes | No |
-| Public address | A `https://...streamlit.app` address | A temporary `https://...trycloudflare.com` address |
-| Database | External PostgreSQL on Neon | PostgreSQL in your local Docker volume |
-| Appropriate use | Portfolio, project submission, small maintainer demo | Interview, short demonstration, testing with a friend |
-| Main limit | Free capacity, sleep/restart behavior, temporary app filesystem | Computer, Docker, internet, and tunnel must remain running |
+Keep `pyproject.toml`, `src/`, `ui/`, and `alembic/` at the repository root. The cloud entrypoint is **`ui/community_app.py`**.
 
-## Upgrade an already working deployment with AI labels
+This entrypoint runs the UI and a private, loopback-only API in the same installation. It enables GitHub authentication and uses an external PostgreSQL database.
 
-Follow [the AI-label upgrade steps](AI_LABELS.md). Keep the same database URL, encryption key, Python 3.12, and `ui/community_app.py` entrypoint. Add your own `GROQ_API_KEY` in Streamlit's private Secrets settings and redeploy the updated source. Migration 0003 creates the persistent label cache and label-review tables automatically. The Groq Free plan has limited quotas; pending work waits and retries rather than inventing a result.
+### 2. Create a PostgreSQL database
 
-If you already saved the Groq key but still see a missing-key notice, install the **0.3.1 secrets fix** and follow [these troubleshooting steps](SECRETS_TROUBLESHOOTING.md). The old helper could retain a backend started before the key was added; an old import result could also show stale setup status.
+Create a Neon project and copy its connection string from the **Connect** dialog. Preserve its SSL parameters. See [Neon's connection documentation](https://neon.com/docs/connect/connect-from-any-app).
 
-If the key is loaded but issues remain Waiting for AI, version **0.3.2** adds current progress, provider errors, retry times, and a direct **Run AI now** action. See [AI waiting and recovery](AI_WAITING.md).
+The database stores connected repositories, issues, encrypted GitHub credentials, analysis results, and reviews.
 
-For a first-time deployment, follow option A below, then enable the Groq key using that same upgrade section.
+### 3. Generate an encryption secret
 
-## Option A: Free cloud demo
-
-### 1. Upload the updated project to GitHub
-
-Use the **updated** source folder containing this guide. Publish its contents at the rwoot of a GitHub repository; do not publish a parent folder containing several project copies. See [GITHUB_UPLOAD.md](GITHUB_UPLOAD.md) if needed.
-
-The repository must contain:
-
-```text
-README.md
-pyproject.toml
-uv.lock
-alembic.ini
-alembic/
-config/
-src/triagedesk/
-ui/app.py
-ui/account.py
-ui/community_app.py
-ui/requirements.txt
-```
-
-`ui/community_app.py` is the new cloud entrypoint. It starts one private FastAPI process on loopback, applies database migrations, waits for readiness, then opens the existing dashboard. It caches that backend across visitors and reruns. Only the Streamlit interface is public. GitHub authentication and repository permission checks still run in the API.
-
-`ui/requirements.txt` installs the project's base Python dependencies. Community Cloud searches the entrypoint directory before the repository root, so this file selects the small base installation rather than optional PyTorch/semantic dependencies. The existing locked Docker/development workflow remains available separately.
-
-Keep `.env`, `.streamlit/secrets.toml`, backups, provider credentials, and generated datasets/models outside Git. Only the unfilled `.streamlit/secrets.toml.example` template belongs in the source repository.
-
-### 2. Create a free PostgreSQL database
-
-1. Open [Neon](https://neon.com/) and create an account.
-2. Select the **Free** plan and create a project, for example `triagedesk-demo`.
-3. Keep the database and role created for this project. Open **Connect** and copy the PostgreSQL connection string. A direct connection is sufficient for this single-instance demo; use it for the automatic migrations too.
-4. Keep the SSL query parameters provided by Neon. The URL will resemble:
-
-   ```text
-   postgresql://USER:PASSWORD@YOUR-NEON-HOST/DATABASE?sslmode=require
-   ```
-
-5. Save the real connection string privately for the next step. Do not paste it into a README or commit it.
-
-Neon's current Free plan is **$0, without a credit card**, with **1 GB storage and 100 CU-hours per project per month**. Its compute can scale to zero after inactivity, so an initial request can take longer. Check usage in Neon and keep this a small demo. [Official pricing](https://neon.com/pricing); [connection instructions](https://neon.com/docs/connect/connect-from-any-app).
-
-TriageDesk accepts Neon's `postgresql://` string and selects its installed psycopg driver automatically. You do not need to create tables by hand.
-
-### 3. Generate an application encryption secret
-
-Run this on your own computer:
+Run this locally:
 
 ```sh
-python3 -c 'import secrets; print(secrets.token_urlsafe(48))'
+python3 -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
-Copy the generated value privately. It encrypts GitHub credentials stored in the database. Keep the same value across reboots and source updates. It is separate from your database password, a GitHub token, and a GitHub App Client ID.
+Save the generated value for `AUTH_ENCRYPTION_KEY`. Keep it private and retain the same value across deployments so existing stored credentials remain readable.
 
-### 4. Create the free Streamlit app
+### 4. Deploy the app
 
-1. Open [Streamlit Community Cloud](https://share.streamlit.io/) and sign in. Link the GitHub account that owns the source repository.
-2. Choose **Create app**, then choose to deploy an existing app from GitHub.
-3. Select your repository and branch.
-4. Set **Main file path** to **`ui/community_app.py`**. Using `ui/app.py` alone will not start the API on this host.
-5. Optionally choose an available app subdomain.
-6. Open **Advanced settings** and select **Python 3.12**. This project requires Python 3.12.
-7. Paste the following into **Secrets**, replacing both placeholders with the private values from steps 2 and 3:
+Create an app in Streamlit Community Cloud, select the repository and branch, and choose:
 
-   ```toml
-   DATABASE_URL = "postgresql://USER:PASSWORD@YOUR-NEON-HOST/DATABASE?sslmode=require"
-   AUTH_ENCRYPTION_KEY = "YOUR_RANDOM_SECRET_FROM_STEP_3"
-   GITHUB_CLIENT_ID = ""
-   ```
+- Main file: `ui/community_app.py`
+- Python version: **3.12**
 
-   Keep these settings at the top level, without a `[section]` header. Leave the optional Client ID empty for the first deployment.
-8. Save the settings and select **Deploy**.
-9. Wait for package installation and startup. Open the app's assigned `https://...streamlit.app` URL.
+Before deploying, add these values in **Advanced settings → Secrets**. Replace all placeholders:
 
-Community Cloud is a free hosting service. Its deployment interface lets you select the source repository, entrypoint, Python version, and private secrets. [Service](https://streamlit.io/cloud); [deployment instructions](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/deploy); [secret settings](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management).
+```toml
+DATABASE_URL = "postgresql://USER:PASSWORD@YOUR-NEON-HOST/DATABASE?sslmode=require"
+AUTH_ENCRYPTION_KEY = "REPLACE_WITH_YOUR_GENERATED_SECRET"
+GROQ_API_KEY = "REPLACE_WITH_YOUR_GROQ_API_KEY"
+AI_MODEL = "qwen/qwen3.8-27b"
+AI_CONFIDENCE_THRESHOLD = 0.85
+AI_BATCH_SIZE = 5
+AI_REQUEST_INTERVAL = 10
+AUTO_SYNC_SECONDS = 60
+GITHUB_CLIENT_ID = ""
+```
 
-The helper enforces `MODE=real`, `AUTH_MODE=github`, individual GitHub sessions, and no shared reviewer/provider token. You do not need Docker, a public API service, or the local fixture `.env` on Community Cloud. Creating a Streamlit hosting account does not automatically sign a visitor into TriageDesk.
+Use top-level settings and keep API keys on a single line. The checked-in `.streamlit/secrets.toml.example` is a template; populated secrets belong in the hosting settings.
 
-### 5. Sign in as a maintainer
+Deploy the app. Startup applies database migrations and starts the private API. See [Streamlit's deployment documentation](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app) for account setup and deployment controls.
 
-For the first demo, use the existing fine-grained GitHub-token option; no GitHub App registration is required:
+### 5. Sign in and connect a repository
 
-1. In GitHub, create a fine-grained personal access token for a public repository you own or maintain.
-2. Grant **Metadata: read** and **Issues: read**. Select the intended repository and complete any required organization approval.
-3. Open the hosted dashboard and expand **Sign in with a fine-grained GitHub token**.
-4. Enter your token into the password field and choose **Verify GitHub identity**.
+1. Create a fine-grained GitHub personal access token for a public repository you maintain.
+2. Grant **Metadata: read** and **Issues: read**.
+3. Use the token to sign in to TriageDesk.
+4. Open **Connect repository**, enter `owner/repository`, and choose **Verify maintainer and import issues**.
 
-The API verifies the account through GitHub. Repository maintainership is checked separately when connecting or writing: personal ownership or a GitHub-confirmed triage, write, maintain, or admin role is required. Knowing a public repository URL or having read access alone does not grant maintainer rights.
+GitHub must confirm repository ownership or triage, write, maintain, or admin access. Read access alone does not grant maintainer rights. Each visitor uses their own credential; personal GitHub tokens do not belong in app-wide secrets.
 
-Each visitor signs in with their own account credential. Do not add a maintainer's personal token to the app-wide secrets. The API encrypts provider credentials, stores application-session digests, expires sessions, and rechecks repository permissions. This application reads GitHub and saves decisions in its own database; it does not modify GitHub labels or issues.
+Imported issues are analyzed automatically. Open **Issues**, **Needs review**, or **Reviewed** to inspect the results. Labels remain inside TriageDesk.
 
-### 6. Connect a public repository and sort its actual issues
+### Optional browser sign-in
 
-1. Open **Connect repository**.
-2. Paste `your-account/your-repository` or its canonical GitHub URL.
-3. Start with a fetch cap of **100–200** response objects to keep the free demo small.
-4. Choose **Verify maintainer and import issues** and watch progress.
-5. Select the connected repository. Open **Issues**, choose a label-group tab and then a label. **Needs review** contains only uncertain AI results; completed human decisions appear in **Reviewed**.
-6. Review an uncertain result, adjust its labels if necessary, save a note, and inspect its review history.
+To enable **Sign in with GitHub**:
 
-Pull requests are excluded; capped imports are partial. Initial connections fetch recently updated open issues. With a Groq key configured, the background job assigns multi-label AI suggestions and saves them in PostgreSQL. High-confidence results are auto-sorted; uncertain results need review. Without the key, reports stay Waiting for AI. The free setup retains TF-IDF related-issue search and does not download a large local model or train a classifier at startup.
+1. Register a GitHub App with the deployed app's homepage URL.
+2. Enable device flow and read-only repository Metadata and Issues permissions.
+3. Install the App on the repositories you want to connect.
+4. Add its **Client ID** to `GITHUB_CLIENT_ID` in Streamlit Secrets, then reload or reboot the app.
 
-While a signed-in workspace is open, it checks for changes about every 60 seconds and continues pending AI batches. You can also use **Synchronize changes to an already connected repository** in the connection form. To extend a partial collection, increase the cap and run another full import. One job runs at a time. Closures detected during synchronization purge the issue and its local analysis/review history from PostgreSQL. This is active-session polling rather than a webhook subscription; sleeping free hosting delays detection.
+Sign in using the displayed device code and GitHub verification page. This flow needs no callback route, client secret, or App private key. See [GitHub's device-flow documentation](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app#using-the-device-flow-to-generate-a-user-access-token).
 
-### 7. Optional: Enable the GitHub sign-in button
+### Persistence and limits
 
-After the token-based demo works:
+PostgreSQL retains issues, analyses, reviews, and job records across app reboots. Detected closed issues and their dependent local records are removed during synchronization. Keep the database project and back up data you need to retain.
 
-1. Register a **GitHub App**. Set its homepage to the real Streamlit app URL.
-2. Enable **device flow**, with repository **Metadata: read** and **Issues: read** permissions.
-3. Install the App on the public repositories you want to connect. Make its installation availability appropriate for the accounts you intend to serve; organizations may require approval.
-4. Copy the App's **Client ID**, not its numeric App ID.
-5. In Community Cloud, open your app's **Settings → Secrets**, fill `GITHUB_CLIENT_ID`, save, and **Reboot** the app.
-6. Use **Sign in with GitHub**, open GitHub's verification page, approve the displayed code, and return to the dashboard.
+Search indexes use temporary local storage and are rebuilt by repository synchronization after a backend restart. Cached AI analysis remains in PostgreSQL. Browser refreshes or session expiry can require signing in again.
 
-This implementation uses device authorization and needs no callback route, client secret, or App private key. It does not retain refresh tokens. A browser refresh or application restart may require signing in again. [GitHub's device-flow documentation](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app#using-the-device-flow-to-generate-a-user-access-token).
+Use one app instance for this setup. Synchronization and analysis continue while a signed-in workspace is open; sleeping hosting or an inactive workspace delays them. Provider quotas and storage allowances also apply.
 
-### Free-demo persistence and limits
+## Share a local installation temporarily
 
-- **Open issues, snapshots, AI analyses, review history, and job progress:** stored in Neon and retained across app reboots, as long as you keep the project. Detected closed issues and their dependent local records are purged. Back up important data; the free allowance is finite.
-- **Credentials:** remain encrypted in Neon. Preserve `AUTH_ENCRYPTION_KEY`; changing it makes existing encrypted credentials unreadable and requires a new sign-in.
-- **Browser sign-in state:** may reset after refresh, sleep, or restart. Sign in again.
-- **Search indexes and any uploaded models:** live in a temporary directory and can disappear when the backend restarts. The next automatic synchronization, or a manual connection sync, rebuilds TF-IDF search from database issues. Saved AI label analyses remain in Neon and do not need repeating. Historical evaluation artifacts are not bundled into this deployment.
-- **Interrupted import:** committed pages remain in PostgreSQL. After the three-minute job lease expires, retry from the connection form. Pending work resumes when a signed-in workspace is open again.
-- **Capacity:** one Streamlit app and one private API process share free capacity. Start with a small backlog, avoid the optional semantic dependencies, and avoid training or benchmarking in the cloud app. Availability and resource limits belong to the providers; this is a small demonstration setup.
-
-### Check your hosted demo
-
-Open the actual public URL in a fresh browser session. Confirm the sign-in screen appears; sign in as a real maintainer; import a small public repository; save a review. Reboot the app and confirm the review remains after signing in again. A different account without maintainer rights should be refused when connecting that repository. Check related search again after rebuilding an index if needed.
-
-These owner-account checks complete the live deployment verification. Local automated checks do not prove that your Neon connection, Streamlit account, or real GitHub credential has been configured correctly.
-
-## Option B: A free temporary link from your laptop
-
-Use this when the project already runs locally and you only need a link during a demonstration. There is no separate cloud database or hosting account to set up. The laptop remains the server.
-
-### 1. Start verified GitHub mode locally
-
-If a verified local installation already runs, keep it running and skip directly to step 2 using its current dashboard port. Otherwise, in the project root, with Docker Desktop running:
+Start the GitHub-authenticated local setup from the repository root:
 
 ```sh
 python3 scripts/setup-github-local.py
 docker compose up --build -d --wait
 ```
 
-Open `http://localhost:8501` and verify that you see GitHub sign-in. The setup helper preserves existing settings and creates a private encryption key. Use the token sign-in flow from option A, or set `GITHUB_CLIENT_ID` locally for the optional App flow.
+Add `GROQ_API_KEY` to `.env` to enable labeling, and apply it with `docker compose up -d --wait`.
 
-If port 8501 is occupied, choose a separate set of ports with `--db-port`, `--api-port`, and `--ui-port`; use the chosen UI port in the tunnel command too. The earlier connected installation in this workspace used `http://localhost:18510`; check your own running installation rather than assuming that port exists on another computer.
-
-### 2. Install and start Cloudflare's tunnel client
-
-Install `cloudflared` using the [official downloads](https://developers.cloudflare.com/tunnel/downloads/). With Homebrew on macOS:
+Install `cloudflared` using the [official downloads](https://developers.cloudflare.com/tunnel/downloads/). On macOS with Homebrew:
 
 ```sh
 brew install cloudflared
-```
-
-Then start a Quick Tunnel to **the dashboard port only**:
-
-```sh
 cloudflared tunnel --url http://localhost:8501
 ```
 
-If using the earlier local dashboard port, use `http://localhost:18510` instead. Open the actual `https://...trycloudflare.com` URL printed by the client. Do not publish the API port or the PostgreSQL port.
+If you configured another UI port, use that port in the tunnel command. Share the generated HTTPS address. Keep the computer awake, Docker running, and the tunnel open. Press **Ctrl+C** in the tunnel terminal to close the public link.
 
-Quick Tunnels provide a temporary address without a Cloudflare account or domain. The address ends when the tunnel stops and can change on the next run. [Official Quick Tunnel instructions](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/).
-
-### 3. Share, then stop the demo
-
-Share the generated HTTPS link. Visitors still need their own GitHub sign-in and maintainer permissions inside TriageDesk. Keep the computer awake, Docker running, internet connected, and the tunnel terminal open. Closing the laptop or stopping the tunnel makes the public link unavailable.
-
-Press **Ctrl+C** in the tunnel terminal to remove the public link. You can then stop the local services with `docker compose stop`. Local named volumes retain data; deleting volumes removes that storage.
+Only the dashboard port needs a tunnel. Visitors still sign in with GitHub and need maintainer access. See [Cloudflare Quick Tunnels](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/).
 
 ## Troubleshooting
 
-| Symptom | What to check |
-|---|---|
-| Missing `triagedesk` package | Publish `pyproject.toml`, `src/`, and `ui/requirements.txt`; deploy `ui/community_app.py` from the project root. |
-| Python version rejected | Select **3.12** in Community Cloud's Advanced settings. |
-| Required-secret error | Add both top-level secrets and replace the example placeholders, then reboot. |
-| Database startup fails | Copy Neon's real connection URL, including its database name/password/SSL query. Check the project is available and within its free allowance. |
-| Cannot reach the API on Community Cloud | Deploy **`ui/community_app.py`**, not the separate-service `ui/app.py`. Reboot after updating secrets. |
-| Sign-in button is missing | Token login works first. Add a real GitHub App Client ID and enable its device flow for the optional button. |
-| Identity verified but repository refused | Confirm actual maintainer rights, token/App repository selection, Issues: read, and any organization approval. |
-| Empty Needs review tab | This is normal when AI is confident or issues were already reviewed. Check Issues → Waiting for AI for pending work and verify the Groq key/quota. |
-| Related search unavailable after reboot | Sign in and run repository synchronization/full import to rebuild the temporary index. |
-| Import interrupted or busy | Wait for the three-minute lease to expire and retry; completed pages remain saved. |
-| GitHub quota exhausted | Wait for GitHub's reset, then retry the import. |
-| Free app stops or is slow | Open/wake or reboot it, inspect the hosting logs, reduce the backlog, and check Neon usage. |
-| Tunnel address fails | Confirm the local dashboard works, match its UI port, keep the laptop awake, and use the latest generated URL. |
+| Problem | What to check |
+| --- | --- |
+| Package import fails | Deploy from the project root with `src/`, `pyproject.toml`, and `ui/requirements.txt` present. |
+| Database startup fails | Check the connection URL, SSL parameters, and database availability. |
+| Private API cannot start | Use `ui/community_app.py`, Python 3.12, and valid top-level secrets. |
+| Repository access is refused | Confirm maintainer rights, token or App repository selection, and required organization approval. |
+| Import is interrupted or busy | Allow the expired job lease to be released, then retry; committed pages remain saved. |
+| Issues stay Waiting for AI | Check current key status, provider errors, and quota. See [AI_LABELS.md](AI_LABELS.md). |
+| Related search is unavailable after restart | Synchronize the repository to rebuild its temporary search index. |
 
-For backup and recovery details, see [DEPLOYMENT.md](DEPLOYMENT.md). For evaluation limits, see [EVALUATION.md](EVALUATION.md).
-
-## Checks recorded for this update
-
-The full local suite passed **74 tests**, including **eight PostgreSQL integration tests** (`evidence/free-hosting-tests.xml`). A separate Linux container check ran `ui/community_app.py` against actual PostgreSQL, rendered the token sign-in page, confirmed `MODE=real` and `AUTH_MODE=github`, rejected unauthenticated workspace data with HTTP 401, and reused the same private backend for two simulated visitors (`evidence/free-hosting-smoke.json`). Lint, formatting, and Alembic drift checks passed.
-
-These checks used local PostgreSQL, not a live Neon project or Community Cloud deployment. Real provider-account setup and maintainer sign-in remain the final verification steps in your accounts.
-
-The version-0.3 label workflow and its current verification are described in [AI_LABELS.md](AI_LABELS.md). Earlier free-hosting evidence above predates that upgrade.
+For backups, updates, and the optional Render deployment, see [DEPLOYMENT.md](DEPLOYMENT.md).
