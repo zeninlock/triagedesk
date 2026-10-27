@@ -1,6 +1,6 @@
 [project]
 name = "triagedesk"
-version = "0.3.1"
+version = "0.3.3"
 description = "Human-reviewed GitHub issue triage with honest ML evaluation"
 requires-python = ">=3.12,<3.13"
 dependencies = [

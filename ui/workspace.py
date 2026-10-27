@@ -1,5 +1,7 @@
 """Tab-based workspace. Data, inference, and authorization remain in FastAPI."""
 
+from datetime import datetime, timezone
+
 import pandas as pd
 import streamlit as st
 from account import connections_page
@@ -19,12 +21,37 @@ STATUS_TITLES = {
 }
 
 
-def watch_workspace(repository_id, api):
+def retry_caption(value):
+    if not value:
+        return
+    retry = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if retry > datetime.now(timezone.utc):
+        st.caption(
+            "Next automatic AI attempt after " + retry.astimezone(timezone.utc).strftime("%H:%M:%S UTC")
+        )
+    else:
+        st.caption("The retry delay has ended.")
+
+
+def watch_workspace(repository_id, api, displayed_info):
+    first_run = True
+
     @st.fragment(run_every="5s")
     def progress():
-        job = api(f"/triage/{repository_id}/refresh", "POST", quiet=True)
-        if not job:
+        nonlocal first_run
+        current = displayed_info if first_run else api(f"/triage/{repository_id}/summary")
+        first_run = False
+        if not current:
             return
+        activity = current.get("ai_activity", {})
+        # A fast job may finish between polls. Refresh the actual issue rows too.
+        if (current["counts"], activity.get("revision")) != (
+            displayed_info["counts"],
+            displayed_info.get("ai_activity", {}).get("revision"),
+        ):
+            st.rerun()
+        job = api(f"/triage/{repository_id}/refresh", "POST")
+        job = job or {}
         if job.get("status") in {"queued", "running"}:
             st.session_state[f"active_job_{repository_id}"] = job["id"]
             st.caption("Updating workspace · " + job["stage"])
@@ -39,6 +66,33 @@ def watch_workspace(repository_id, api):
                         )
                     st.rerun()
             st.caption("Checks for new and closed issues automatically while this workspace is open.")
+        pending = current["counts"].get("pending", 0)
+        if pending:
+            states = activity.get("states", {})
+            error = activity.get("error")
+            if error:
+                st.warning(error["message"] + " " + error["action"])
+                if error.get("automatic_retry", True):
+                    retry_caption(activity.get("retry_after"))
+            st.caption(
+                f"AI progress: {states.get('running', 0)} analyzing · {states.get('queued', pending)} queued · "
+                f"{states.get('failed', 0)} failed attempts. Model: {current['model']}."
+            )
+            busy = job.get("status") in {"queued", "running", "busy"}
+            if st.button(
+                "Run AI now", disabled=busy or not activity.get("can_retry", current.get("ai_configured"))
+            ):
+                started = api(f"/triage/{repository_id}/analyze", "POST")
+                if started:
+                    if started.get("id"):
+                        st.session_state[f"active_job_{repository_id}"] = started["id"]
+                        st.toast("AI pass queued. Saved analyses will be reused.")
+                        st.rerun()
+                    else:
+                        st.info("A recent pass is still within the retry interval. Try again shortly.")
+            st.caption(
+                "Run AI now analyzes pending issues directly, without importing GitHub issues or rebuilding search. Provider backoff still applies."
+            )
 
     progress()
 
@@ -87,9 +141,17 @@ def issue_table(repository_id, api, key, status="all", group=None, label=None):
         {
             "#": item["number"],
             "Issue": item["title"],
-            "Labels": " · ".join(x["name"] for x in item["labels"]) or "Waiting for analysis",
-            "Status": STATUS_TITLES[item["status"]],
+            "Labels": " · ".join(x["name"] for x in item["labels"])
+            or ("Choose labels in review" if item["status"] == "needs_review" else "Waiting for analysis"),
+            "Status": (
+                "AI needs attention"
+                if item["status"] == "pending" and item.get("analysis_failure")
+                else "Analyzing"
+                if item["status"] == "pending" and item.get("analysis_status") == "running"
+                else STATUS_TITLES[item["status"]]
+            ),
             "AI confidence": f"{item['confidence']:.0%}" if item["confidence"] is not None else "—",
+            "AI details": (item.get("analysis_failure") or {}).get("message", ""),
         }
         for item in data["items"]
     ]
@@ -181,8 +243,15 @@ def issue_details(repository_id, api, key_for, can_write):
                 for label in analysis["labels"]:
                     st.write(f"{label['name']} · {label['confidence']:.0%}")
                     st.text(label["evidence"])
-        else:
+        elif issue["status"] == "pending" and issue.get("analysis_failure"):
+            failure = issue["analysis_failure"]
+            st.warning(failure["message"] + " " + failure["action"])
+            if failure.get("automatic_retry", True):
+                retry_caption(issue.get("analysis_retry_after"))
+        elif issue["status"] == "pending":
             st.info("AI analysis is pending. It will run automatically when the service is available.")
+        elif issue["status"] == "reviewed" and not analysis:
+            st.caption("Human labels are saved; AI analysis is not required for this issue.")
         expanded = issue["status"] == "needs_review"
         with st.expander(
             "Review uncertain labels" if expanded else "Adjust labels (optional)", expanded=expanded
@@ -308,8 +377,8 @@ def render_workspace(meta, account, repositories, api, key_for):
         st.info(
             "Automatic AI labeling needs the installation's Groq API key. Your issues remain visible while analysis is pending."
         )
-    if repository_id and github and can_write:
-        watch_workspace(repository_id, api)
+    if repository_id and github and can_write and info:
+        watch_workspace(repository_id, api, info)
     for tab, page in zip(tabs, pages):
         if not tab.open:
             continue

@@ -13,7 +13,13 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from triagedesk import triage
-from triagedesk.ai_labels import GROUPS, taxonomy_for, validate_taxonomy
+from triagedesk.ai_labels import (
+    GROUPS,
+    provider_cooldown,
+    retry_correctable_failures,
+    taxonomy_for,
+    validate_taxonomy,
+)
 from triagedesk.authentication import Principal, authorize_repository_write, principal_for, require_connection
 from triagedesk.config import settings
 from triagedesk.connection_routes import Actor
@@ -40,7 +46,7 @@ from triagedesk.schemas import (
 )
 
 app = FastAPI(
-    title="TriageDesk", version="0.3.1", description="Human-reviewed triage. GitHub operations are read-only."
+    title="TriageDesk", version="0.3.3", description="Human-reviewed triage. GitHub operations are read-only."
 )
 app.include_router(connection_router)
 log = logging.getLogger("triagedesk")
@@ -468,6 +474,15 @@ def update_label_taxonomy(
 
 @app.post("/triage/{repository_id}/refresh", status_code=202)
 def refresh_workspace(repository_id: int, tasks: BackgroundTasks, db: DB, actor: Actor):
+    return schedule_workspace_job(repository_id, tasks, db, actor)
+
+
+@app.post("/triage/{repository_id}/analyze", status_code=202)
+def analyze_workspace(repository_id: int, tasks: BackgroundTasks, db: DB, actor: Actor):
+    return schedule_workspace_job(repository_id, tasks, db, actor, ai_only=True)
+
+
+def schedule_workspace_job(repository_id, tasks, db, actor, ai_only=False):
     from datetime import timedelta
 
     from triagedesk.authentication import verify_maintainer
@@ -486,16 +501,27 @@ def refresh_workspace(repository_id: int, tasks: BackgroundTasks, db: DB, actor:
         if active.github_user_id == actor.github_user_id and active.repository_id == repository_id:
             return job_output(active)
         return {"status": "busy"}
+    if ai_only:
+        if not settings().groq_api_key.get_secret_value():
+            raise HTTPException(503, "The backend has not loaded a Groq API key")
+        cooldown = provider_cooldown(db)
+        if cooldown:
+            raise HTTPException(
+                429, f"AI is waiting for provider backoff until {aware(cooldown.retry_after).isoformat()}"
+            )
     latest = db.scalar(
         select(ConnectionJob.created_at)
         .where(ConnectionJob.repository_id == repository_id)
         .order_by(ConnectionJob.created_at.desc())
         .limit(1)
     )
-    if latest and aware(latest) + timedelta(seconds=settings().auto_sync_seconds) > utcnow():
+    interval = 10 if ai_only else settings().auto_sync_seconds
+    if latest and aware(latest) + timedelta(seconds=interval) > utcnow():
         return {"status": "idle"}
     metadata, role = verify_maintainer(actor, repo.full_name)
     job, created = start_job(db, actor, repo.full_name, metadata, role, 3000, True)
     if created:
-        tasks.add_task(run_job, job.id)
+        if ai_only:
+            retry_correctable_failures(db, repo)
+        tasks.add_task(run_job, job.id, ai_only=ai_only)
     return job_output(job)

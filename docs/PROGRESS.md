@@ -53,3 +53,17 @@ Verified 101 local tests including 12 PostgreSQL cases, migration preservation, 
 Fixed the Community Cloud helper retaining a private backend with obsolete secrets. One thread-safe manager now checks supported configuration on each full app run, stops the previous child before replacement, and shares the current child across visitors. The connection notice reads current API setup status instead of the flag recorded by an earlier import; counts are explicitly historical.
 
 Verified 118 local tests including 12 PostgreSQL cases. A separate entrypoint smoke check uses actual API processes and isolated PostgreSQL to verify adding, replacing, and removing dummy keys, threshold updates, process reuse, and cleanup. Live Groq calls and the user's hosted deployment were not tested. The owner must publish the updated source and reboot the hosted app once.
+
+## Version 0.3.2 — 27 October 2026
+
+Added visible queued/running/failed AI progress, fixed provider reason codes and safe warning logs, retry times, per-issue failure details, and an authenticated direct-analysis action. That action skips GitHub issue fetching and search rebuilding, reuses completed analyses, and retains quota/network backoff. Ready reports are selected before applying the batch limit, so blocked rows do not prevent eligible reports from being analyzed. Workspace rows refresh when analysis state changes even if a job completed between polling checks.
+
+Verified 133 local tests including 13 PostgreSQL cases. The five-issue API workflow uses actual request/response-validation code with a simulated provider. PostgreSQL checks cover failed-analysis visibility and successful retry/cache reuse. No live Groq success or hosted latency improvement is claimed; the screenshot does not establish the production cause of waiting. The GitHub repository's default branch was read and contained version 0.3.1; the Streamlit deployment's selected branch was not inspected.
+
+## Version 0.3.3 — 27 October 2026
+
+Read the provider dashboard and queried the hosted database with SELECT during the subsequent investigation. The recorded calls succeeded quickly, while three current issue analyses were failed with `invalid_output`. The running installation remained at 0.3.1. No production credential was retrieved or used and no hosted data or source was changed.
+
+Fixed the classifier discarding an entire usable response and retrying indefinitely. Evidence formatting is normalized conservatively; unsupported suggestions are removed and the result is saved as uncertain for human review. Invalid response structures pause automatic retries. The cache identity and existing successful/human decisions remain unchanged. The exact offending field in historical responses is unavailable because those bodies were discarded.
+
+Verified 140 local tests including 14 PostgreSQL cases. A PostgreSQL regression reproduces two reviewed reports beside three legacy invalid_output failures, explicitly retries those three, then verifies saved Needs review results and zero further provider calls on repeated passes. Provider responses in these regression tests are simulated; the updated hosted behavior still requires deployment and verification.

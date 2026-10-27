@@ -21,6 +21,8 @@ Follow [the AI-label upgrade steps](AI_LABELS.md). Keep the same database URL, e
 
 If you already saved the Groq key but still see a missing-key notice, install the **0.3.1 secrets fix** and follow [these troubleshooting steps](SECRETS_TROUBLESHOOTING.md). The old helper could retain a backend started before the key was added; an old import result could also show stale setup status.
 
+If the key is loaded but issues remain Waiting for AI, version **0.3.2** adds current progress, provider errors, retry times, and a direct **Run AI now** action. See [AI waiting and recovery](AI_WAITING.md).
+
 For a first-time deployment, follow option A below, then enable the Groq key using that same upgrade section.
 
 ## Option A: Free cloud demo

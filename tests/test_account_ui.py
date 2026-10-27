@@ -197,3 +197,59 @@ connections_page({{
         current_configured and not import_configured
     )
     assert any("During this import: 0 analyzed" in item for item in captions)
+
+
+def test_ai_failure_is_visible_and_direct_retry_refreshes_issue_rows():
+    ui_path = str(Path(__file__).resolve().parents[1] / "ui")
+    app = AppTest.from_string(f"""
+import sys
+sys.path.insert(0, {ui_path!r})
+import streamlit as st
+from workspace import watch_workspace, issue_table
+
+def info():
+    done = st.session_state.get('analyzed', False)
+    return {{
+        'counts': {{'pending': 0 if done else 1, 'auto_sorted': 1 if done else 0}},
+        'model': 'test-model', 'ai_configured': True,
+        'ai_activity': {{
+            'revision': 'complete' if done else 'failed', 'can_retry': True,
+            'states': {{'queued': 0, 'running': 0, 'failed': 0 if done else 1}},
+            'error': None if done else {{'message': 'Groq rejected the API key (401).', 'action': 'Replace it, then retry.'}},
+        }},
+    }}
+
+def api(path, method='GET', **kwargs):
+    if path.endswith('/summary'):
+        return info()
+    if path.endswith('/refresh'):
+        assert not kwargs.get('quiet', False), 'Automatic sync errors must remain visible'
+        return {{'status': 'idle'}}
+    if path.endswith('/analyze'):
+        st.session_state['analyzed'] = True
+        return {{'id': 'ai-pass', 'status': 'queued'}}
+    if path == '/connections/jobs/ai-pass':
+        return {{'status': 'complete'}}
+    if path.endswith('/issues'):
+        done = st.session_state.get('analyzed', False)
+        return {{'total': 1, 'items': [{{
+            'id': 1, 'number': 1, 'title': 'API crashes', 'confidence': 0.96 if done else None,
+            'status': 'auto_sorted' if done else 'pending',
+            'analysis_status': 'complete' if done else 'failed',
+            'analysis_failure': None if done else {{'message': 'Groq rejected the API key (401).'}},
+            'labels': [{{'name': 'bug'}}] if done else [],
+        }}]}}
+    raise AssertionError(path)
+
+watch_workspace(1, api, info())
+issue_table(1, api, 'ai-progress')
+""")
+    app.run(timeout=10)
+    assert not app.exception
+    assert any("Groq rejected the API key (401)" in message.value for message in app.warning)
+    assert app.dataframe[0].value.iloc[0]["Status"] == "AI needs attention"
+    next(button for button in app.button if button.label == "Run AI now").click().run(timeout=10)
+    assert not app.exception
+    assert not app.warning
+    assert app.dataframe[0].value.iloc[0]["Status"] == "Auto-sorted"
+    assert app.dataframe[0].value.iloc[0]["Labels"] == "bug"

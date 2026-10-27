@@ -125,7 +125,7 @@ def touch(job_id, stage, result=None):
         db.commit()
 
 
-def run_job(job_id):
+def run_job(job_id, ai_only=False):
     client = None
     try:
         touch(job_id, "Verifying GitHub repository access")
@@ -138,6 +138,20 @@ def run_job(job_id):
             if metadata["id"] != repo.github_id:
                 raise HTTPException(409, "The repository identity changed; reconnect it")
             name, limit, incremental = job.repository_name, job.object_limit, job.incremental
+        if ai_only:
+            touch(job_id, "Assigning AI labels")
+            ai_result = analyze_repository(
+                database.engine(), repo.id, progress=lambda: touch(job_id, "Assigning AI labels")
+            )
+            with Session(database.engine()) as db:
+                job = db.get(ConnectionJob, job_id)
+                if job.active_key != "import" or job.status == "failed":
+                    return
+                job.result = {**job.result, "ai_labels": ai_result, "ai_only": True}
+                job.status, job.stage, job.active_key = "complete", "AI pass finished", None
+                job.updated_at = utcnow()
+                db.commit()
+            return
         touch(job_id, "Fetching actual GitHub issues")
         client = GitHubClient(token=decrypt(principal.encrypted_token), max_wait=30)
         imported = ingest(

@@ -10,6 +10,10 @@ Version 0.3 adds the AI label cache, nested label tabs, repository-specific labe
 
 Version **0.3.1** fixes Streamlit secret changes leaving the backend with an old Groq configuration, plus stale missing-key notices from earlier imports. See [key-loading troubleshooting](docs/SECRETS_TROUBLESHOOTING.md).
 
+Version **0.3.2** shows queued/running/failed AI progress, provider failure reasons and retry times, refreshes rows after short jobs, and adds **Run AI now** to process pending reports without fetching GitHub issues or rebuilding search. See [Waiting for AI](docs/AI_WAITING.md).
+
+Version **0.3.3** fixes successful responses being discarded and regenerated indefinitely. Supported suggestions are saved with uncertainty for human review when validation finds questionable labels; unusable responses pause automatic retries. See [response validation and retry recovery](docs/AI_VALIDATION_FIX.md).
+
 ## Contents
 
 - [Connect your repository](#connect-your-repository)
@@ -97,7 +101,7 @@ Priority and contributor labels are suggestions supported by the supplied report
 |---|---|
 | Runnable fixture demo | Verified with Docker Compose, migrations, 24 invented issues and health checks |
 | Protected reviews and durable audit | Browser and HTTP saves verified; history/count changes and PostgreSQL restart persistence verified |
-| Automated checks | **118 tests passed, including 12 PostgreSQL cases**; report in `evidence/secrets-fix-tests.xml` includes configuration-change and stale-notice regressions. Earlier reports are preserved. |
+| Automated checks | **140 tests passed, including 14 PostgreSQL cases**; report in `evidence/validation-loop-tests.xml` includes cached uncertain outputs and prevention of repeated malformed-response calls. Earlier reports are preserved. |
 | Automatic AI labels | Five configurable label groups, persistent cache, confidence routing, and active-session continuation implemented; actual Groq key/call and quality assessment remain owner verification. |
 | GitHub authentication | Device and fine-grained-token flows implemented; encrypted credential persistence, expiry/logout, role checks, isolation, and mocked end-to-end imports tested. Live App setup/sign-in remains owner verification. |
 | Real ingestion | 2,999 VS Code issues plus a separate 1,165-issue Streamlit pilot imported; PRs excluded; pilot was rejected for classification |
@@ -389,7 +393,7 @@ The copied `.env` points to PostgreSQL on localhost:5433. `API_URL` defaults to 
 ```sh
 uv run ruff check src ui tests
 uv run ruff format --check src ui tests alembic
-uv run pytest -q                     # twelve PG tests skip if TEST_DATABASE_URL is unset
+uv run pytest -q                     # fourteen PG tests skip if TEST_DATABASE_URL is unset
 docker compose exec db createdb -U triagedesk triagedesk_test  # once; skip if it already exists
 TEST_DATABASE_URL=postgresql+psycopg://triagedesk:triagedesk@localhost:5433/triagedesk_test uv run pytest -q
 uv run alembic check
@@ -398,9 +402,11 @@ API_URL=http://localhost:8000 REVIEWER_TOKEN=local-demo-change-me uv run python 
 
 ### What was tested
 
-The version-0.3.1 run passed **118 tests, including 12 PostgreSQL cases**, with no failures or skips (`evidence/secrets-fix-tests.xml`). Earlier 101-test and 74-test reports are preserved separately. The current checks include actual PostgreSQL; other checks use in-memory SQLite, local components, or mocked external responses where appropriate.
+The version-0.3.3 run passed **140 tests, including 14 PostgreSQL cases**, with no failures or skips (`evidence/validation-loop-tests.xml`). Earlier 133-test, 118-test, 101-test and 74-test reports are preserved separately. The current checks include actual PostgreSQL; other checks use in-memory SQLite, local components, or mocked external responses where appropriate.
 
 - **AI labels:** structured provider output, exact label/evidence validation, confidence routing, persistent caching, failed-call backoff, stale source invalidation, custom taxonomy, closed-record purging, and competing PostgreSQL claims/reviews.
+- **AI progress and recovery:** five issues processed through the authenticated direct-analysis API and real request/validation code with a simulated provider; cache reuse on a repeated pass; visible failed versus queued states; no GitHub issue import or search rebuild during that action; permission checks and retained provider backoff; PostgreSQL failure/retry recovery.
+- **Rejected-output loop:** questionable suggestions are filtered, saved as uncertain, and reused without further calls. Malformed responses pause rather than regenerate automatically. PostgreSQL reproduces three historical `invalid_output` failures beside two reviewed reports, retries once, then verifies three cached Needs review decisions and zero pending reports.
 - **Free-cloud startup:** mandatory PostgreSQL/secret configuration, forced GitHub authentication, inherited shared credentials removed, failed-start cleanup, safe errors, changed-secret restarts, concurrent visitors, and current versus historical import notices. The entrypoint also passed a local PostgreSQL smoke check for adding, replacing, and removing dummy Groq keys, changed thresholds, shared visitors, and child cleanup (`evidence/secrets-fix-smoke.json`).
 - **Identity and access:** encrypted provider credentials, hashed sessions, expiry/logout, numeric GitHub identity, repository isolation, denied roles, revoked write access, device polling, malformed URLs, and concurrent import admission.
 - **Ingestion:** page traversal, PR exclusion, idempotent imports, failed-page rollback, partial collection status, preserved snapshots, API failures, and rate-limit handling.
@@ -411,7 +417,7 @@ The version-0.3.1 run passed **118 tests, including 12 PostgreSQL cases**, with 
 
 Additional local checks covered an actual browser save, clean Docker startup from the extracted source, review survival after service/container restart, restoration into a new database, and the optional Linux CPU semantic container. Passing these checks establishes the tested software behavior, not model accuracy or user usefulness.
 
-The smoke script intentionally writes only to synthetic mode and refuses real data. Integration tests create isolated schemas in the dedicated test database and remove only their own generated schemas. CI uses a PostgreSQL service, mocked GitHub and no live token/model downloads. The current local result is in the version-0.3.1 report; remote GitHub Actions success must be checked after publication.
+The smoke script intentionally writes only to synthetic mode and refuses real data. Integration tests create isolated schemas in the dedicated test database and remove only their own generated schemas. CI uses a PostgreSQL service, mocked GitHub and no live token/model downloads. The current local result is in the version-0.3.3 report; remote GitHub Actions success must be checked after publication.
 
 ## API and configuration
 

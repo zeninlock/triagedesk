@@ -1327,7 +1327,7 @@ wheels = [
 
 [[package]]
 name = "triagedesk"
-version = "0.3.1"
+version = "0.3.3"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },

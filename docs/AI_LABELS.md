@@ -4,6 +4,10 @@ TriageDesk uses Groq's hosted API to label imported public GitHub issues. Labels
 
 **Key saved but still shown as missing?** Version 0.3.1 refreshes the private backend when supported secrets change and uses current setup status instead of an old import result. Follow [the secrets troubleshooting steps](SECRETS_TROUBLESHOOTING.md) to update and reboot an existing deployment.
 
+**Issues remain Waiting for AI?** Version 0.3.2 shows actual queued/running/failed states, provider error reasons, retry times, and a **Run AI now** action that skips GitHub import and search rebuilding. See [AI progress and recovery](AI_WAITING.md).
+
+**Successful calls but few saved analyses?** Version 0.3.3 fixes the rejected-output loop. It saves usable uncertain suggestions for review and pauses automatic retries of unusable responses. See [validation recovery](AI_VALIDATION_FIX.md).
+
 ## Enable it on your existing free deployment
 
 1. Replace the deployed repository's source with this updated version, including `src/`, `ui/`, `alembic/`, `pyproject.toml`, and `uv.lock`.
@@ -29,7 +33,7 @@ For local Docker, add the same values to the ignored `.env`, run `python3 script
 
 1. The first connection fetches the most recently updated **open** issues, excluding pull requests.
 2. A background job sends each pending report's title, a bounded description excerpt, existing labels, and configured label names to Groq. GitHub credentials and application-session tokens are never included in the model input.
-3. The model returns a summary, explanation, labels, exact supporting quotations, confidence scores, and an uncertainty flag. The backend rejects unknown labels, invalid scores, repeated labels, or unsupported quotations.
+3. The model returns a summary, explanation, labels, supporting quotations, confidence scores, and an uncertainty flag. The backend checks label names/groups and evidence, normalizing equivalent quote formatting. Unsupported or duplicate suggestions are removed and the usable result is saved as uncertain for human review. Invalid required fields, scores, or response structures pause automatic retries.
 4. Each result is committed to PostgreSQL. The cache identity includes the source snapshot, model, prompt version, and label taxonomy. Reopening a page, logging in again, or restarting the cloud app reuses completed results.
 5. Results at or above the cutoff are **Auto-sorted**, provided the model did not mark them uncertain. A result below the cutoff, with an uncertain flag, without one primary type, or based on truncated issue text goes to **Needs review**.
 6. Saving a human decision moves that issue to **Reviewed** and removes it from **Needs review**. Human labels override AI labels; the original AI output and review history remain available for open issues. Previous completed reviews from version 0.2 are recognized too.
@@ -61,13 +65,13 @@ The main navigation is now clickable tabs: **Overview**, **Issues**, **Needs rev
 
 `AI_CONFIDENCE_THRESHOLD=0.85` is a configurable operational cutoff. It is **not a claim of 85% measured correctness**. Scores are model-reported and uncalibrated. The effective confidence is the minimum of the overall score and the selected label scores. An explicit uncertainty flag always requires review, even with a high numeric score.
 
-Missing credentials, failed requests, exhausted quota, or invalid output leave the report **Waiting for AI**. Such cases do not create fake AI labels or claim a confident classification. Provider failures are saved with a retry time; rate-limit backoff is respected across issues. Maintainers can still adjust labels manually if they choose. The application keeps its source-label/rule classifier API for historical compatibility, but it does not present those results as LLM-generated labels in the new workspace.
+Missing credentials and temporary provider failures leave reports pending. Rate-limit and network backoff are respected across issues. Malformed responses show **AI needs attention** and pause automatic retries; an explicit **Run AI now** action can make a fresh attempt. Structurally usable results with unsupported suggestions are saved as uncertain in **Needs review**, retaining only supported labels and a validation note. Such cases never claim a confident classification, and completed uncertain results are reused. The application keeps its source-label/rule classifier API for historical compatibility, but it does not present those results as LLM-generated labels in the new workspace.
 
 Pending work resumes when a signed-in user keeps a workspace open. Only one import/index/AI job runs per installation; per-snapshot claims and a unique database cache key prevent concurrent workers from analyzing the same snapshot twice. Session expiry or sign-out stops further job progress. Keep one application instance for this MVP.
 
 ## What has been verified
 
-The local suite passed **101 tests**, including **12 actual PostgreSQL cases** (`evidence/ai-label-tests.xml`). Automated checks exercise cache reuse, uncertain versus automatic routing, nested label filters, stale and repeated reviews, custom taxonomies, malformed model output, bounded requests, rate-limit backoff, closed-issue purging, repository isolation, and tab navigation. PostgreSQL tests exercise competing AI claims, competing reviews, identical retries, and deletion with actual foreign keys. A separate upgrade check verifies preservation of an existing version-0.2 issue, snapshot, and review.
+The current local suite passed **140 tests**, including **14 actual PostgreSQL cases** (`evidence/validation-loop-tests.xml`). Automated checks exercise cached uncertain output, malformed-response pauses, cache reuse, uncertain versus automatic routing, nested filters, stale and repeated reviews, custom taxonomies, bounded requests, rate-limit backoff, closure purging, repository isolation, and tab navigation. PostgreSQL tests exercise the rejected-output recovery pattern, competing AI claims/reviews, identical retries, and deletion with actual foreign keys. Earlier reports and the separate version-0.2 migration preservation check remain available.
 
 Provider responses and GitHub identities are mocked in these tests; no live Groq credential or new multi-label accuracy result is claimed. The historical three-class classifier's F1 score does not describe this LLM workflow. Check real results on a small public repository after adding your own key, and evaluate a separate labeled sample before making accuracy claims.
 

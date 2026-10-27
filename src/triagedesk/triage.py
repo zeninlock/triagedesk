@@ -6,9 +6,17 @@ from sqlalchemy import and_, case, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased
 
-from triagedesk.ai_labels import GROUPS, analyzer_key, publish_labels, taxonomy_for
+from triagedesk.ai_labels import (
+    GROUPS,
+    analyzer_key,
+    error_details,
+    provider_cooldown,
+    publish_labels,
+    taxonomy_for,
+)
 from triagedesk.config import settings
-from triagedesk.models import Issue, LabelAnalysis, LabelAssignment, LabelReview, Review
+from triagedesk.github import aware
+from triagedesk.models import Issue, LabelAnalysis, LabelAssignment, LabelReview, Review, utcnow
 from triagedesk.text import digest
 
 
@@ -79,6 +87,8 @@ def scope(repository):
         a.summary,
         a.explanation,
         a.error.label("analysis_error"),
+        a.retry_after.label("analysis_retry_after"),
+        a.lease_until.label("analysis_lease_until"),
         r.id.label("label_review_id"),
         legacy.category.label("legacy_category"),
         legacy.action.label("legacy_action"),
@@ -114,6 +124,7 @@ def labels_for_rows(db, rows):
             {"group": assignment.group, "name": assignment.name, "confidence": assignment.confidence}
         )
     for item in items.values():
+        item["analysis_failure"] = error_details(item["analysis_error"])
         if item["status"] == "reviewed" and not item["label_review_id"] and item["legacy_category"]:
             item["labels"] = [{"group": "type", "name": item["legacy_category"], "confidence": None}]
     return list(items.values())
@@ -170,6 +181,36 @@ def list_labeled_issues(
     return {"items": labels_for_rows(db, rows), "total": total, "page": page, "page_size": page_size}
 
 
+def analysis_activity(db, repository, counts):
+    q = scope(repository).subquery()
+    pending = q.c.status == "pending"
+    state = case(
+        (and_(q.c.analysis_status == "running", q.c.analysis_lease_until > utcnow()), "running"),
+        (q.c.analysis_status == "failed", "failed"),
+        else_="queued",
+    )
+    states = {name: 0 for name in ("queued", "running", "failed")}
+    states.update(dict(db.execute(select(state, func.count()).where(pending).group_by(state)).all()))
+    failure = db.execute(
+        select(q.c.analysis_error, q.c.analysis_retry_after)
+        .where(pending, q.c.analysis_status == "failed", q.c.analysis_error.is_not(None))
+        .order_by(q.c.analysis_id.desc())
+        .limit(1)
+    ).first()
+    cooldown = provider_cooldown(db) if counts["pending"] else None
+    error = error_details(cooldown.error if cooldown else failure.analysis_error if failure else None)
+    retry = cooldown.retry_after if cooldown else failure.analysis_retry_after if failure else None
+    retry_after = aware(retry).isoformat() if retry else None
+    latest = db.scalar(select(func.max(q.c.analysis_id)))
+    return {
+        "states": states,
+        "error": error,
+        "retry_after": retry_after,
+        "can_retry": bool(settings().groq_api_key.get_secret_value()) and cooldown is None,
+        "revision": digest([counts, states, latest, error, retry_after]),
+    }
+
+
 def summary(db, repository):
     q = scope(repository).subquery()
     counts = {name: 0 for name in ["auto_sorted", "needs_review", "reviewed", "pending"]}
@@ -192,6 +233,7 @@ def summary(db, repository):
             labels[group][name] = count
     return {
         "counts": counts,
+        "ai_activity": analysis_activity(db, repository, counts),
         "total": sum(counts.values()),
         "labels": labels,
         "taxonomy": taxonomy_for(repository),

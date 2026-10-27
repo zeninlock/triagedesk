@@ -29,6 +29,8 @@ No database reset or new migration is needed for this patch. Changing the Groq k
 
 ## If the key is loaded but issues still wait
 
+Version 0.3.2 adds explicit progress, safe failure reasons, and direct AI retry. Start with [Waiting for AI](AI_WAITING.md).
+
 An imported issue count is separate from an AI analysis count. One pass processes up to `AI_BATCH_SIZE` reports (default five). The selected workspace schedules further passes roughly every minute while open, and provider backoff can delay them. A completed human review is also reused instead of generating another AI analysis.
 
 Check that your selected model supports the app's strict JSON-schema output, the key is active in your Groq account, and the account has available quota. A loaded key can still be rejected by the provider. Do not reset the database or assume the key is missing because a historical import says **0 analyzed**.

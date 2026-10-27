@@ -1,0 +1,25 @@
+{
+  "version": "0.3.3",
+  "tests": {
+    "tests": 140,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "postgres_cases": 14,
+  "regression": "Three legacy invalid_output rows beside two reviewed reports",
+  "explicit_retry_provider_calls": 3,
+  "extra_provider_calls_on_four_subsequent_passes": 0,
+  "result_counts": {
+    "needs_review": 3,
+    "reviewed": 2,
+    "pending": 0
+  },
+  "provider_in_regression_tests": "simulated HTTP responses; real parsing and validation",
+  "production_database_changes_made": false,
+  "production_deployment_changed": false,
+  "live_model_requests_made_during_investigation": false,
+  "completed_cache_and_human_reviews_preserved": true,
+  "confidence_threshold_changed": false,
+  "historical_rejected_response_bodies_available": false
+}

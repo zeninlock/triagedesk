@@ -1,3 +1,4 @@
+import json
 from datetime import timedelta
 
 import httpx
@@ -7,16 +8,18 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from test_ai_labels import proposed
 
-from triagedesk import authentication, connection_routes, connections
+from triagedesk import ai_labels, authentication, connection_routes, connections
 from triagedesk.api import app
 from triagedesk.config import settings
-from triagedesk.github import GitHubClient
+from triagedesk.github import GitHubClient, upsert_issue
 from triagedesk.models import (
     AuthSession,
     ConnectionJob,
     DeviceLogin,
     Issue,
+    LabelAnalysis,
     Prediction,
     Repository,
     RepositoryAccess,
@@ -72,6 +75,105 @@ def grant(db_engine, user_id=42, repo=REPO):
         db.add(RepositoryAccess(repository_id=row.id, github_user_id=user_id, role="owner"))
         db.commit()
         return row.id
+
+
+def pending_issues(db_engine, repository_id, count=5):
+    with Session(db_engine) as db:
+        repo = db.get(Repository, repository_id)
+        for number in range(1, count + 1):
+            upsert_issue(
+                db, repo, raw_issue(number, title="API crashes after update", body="Previously worked.")
+            )
+        db.commit()
+
+
+def test_ai_only_retry_labels_five_issues_without_import_or_search(github_client, database, monkeypatch):
+    identity_provider(monkeypatch)
+    headers = login(github_client)
+    repo_id = grant(database)
+    pending_issues(database, repo_id)
+    monkeypatch.setenv("GROQ_API_KEY", "dummy-key-never-sent-to-live-provider")
+    settings.cache_clear()
+    calls = []
+    real_client = httpx.Client
+
+    def provider(request):
+        assert request.url.host == "api.groq.com"
+        calls.append(request)
+        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(proposed())}}]})
+
+    monkeypatch.setattr(
+        httpx, "Client", lambda **kwargs: real_client(transport=httpx.MockTransport(provider), **kwargs)
+    )
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("AI-only work must not fetch GitHub issues or rebuild search")
+
+    monkeypatch.setattr(connections, "ingest", forbidden)
+    monkeypatch.setattr(connections, "build_index", forbidden)
+    response = github_client.post(f"/triage/{repo_id}/analyze", headers=headers)
+    assert response.status_code == 202, response.text
+    job = github_client.get(f"/connections/jobs/{response.json()['id']}", headers=headers).json()
+    assert job["status"] == "complete" and job["result"]["ai_only"]
+    assert job["result"]["ai_labels"]["analyzed"] == len(calls) == 5
+    summary = github_client.get(f"/triage/{repo_id}/summary", headers=headers).json()
+    assert summary["counts"]["auto_sorted"] == 5 and summary["counts"]["pending"] == 0
+    # A second eligible pass must reuse all five saved results.
+    with Session(database) as db:
+        row = db.get(ConnectionJob, response.json()["id"])
+        row.created_at = utcnow() - timedelta(seconds=20)
+        db.commit()
+    second = github_client.post(f"/triage/{repo_id}/analyze", headers=headers)
+    assert second.status_code == 202
+    saved = github_client.get(f"/connections/jobs/{second.json()['id']}", headers=headers).json()
+    assert saved["result"]["ai_labels"]["cached"] == 5 and len(calls) == 5
+
+
+def test_ai_retry_requires_connected_maintainer_and_writable_installation(
+    github_client, database, monkeypatch
+):
+    identity_provider(monkeypatch)
+    headers = login(github_client)
+    repo_id = grant(database)
+    other = grant(database, user_id=99, repo={**REPO, "id": 78, "full_name": "other/project"})
+    assert github_client.post(f"/triage/{repo_id}/analyze").status_code == 401
+    assert github_client.post(f"/triage/{other}/analyze", headers=headers).status_code == 403
+    assert github_client.post(f"/triage/{repo_id}/analyze", headers=headers).status_code == 503
+    monkeypatch.setenv("GROQ_API_KEY", "dummy-key")
+    monkeypatch.setenv("READ_ONLY", "true")
+    settings.cache_clear()
+    assert github_client.post(f"/triage/{repo_id}/analyze", headers=headers).status_code == 403
+    monkeypatch.setenv("READ_ONLY", "false")
+    settings.cache_clear()
+    identity_provider(monkeypatch, repo={**REPO, "owner": {"id": 88, "type": "Organization"}})
+    assert github_client.post(f"/triage/{repo_id}/analyze", headers=headers).status_code == 403
+
+
+def test_ai_retry_cannot_bypass_provider_backoff(github_client, database, monkeypatch):
+    identity_provider(monkeypatch)
+    headers = login(github_client)
+    repo_id = grant(database)
+    pending_issues(database, repo_id, 1)
+    monkeypatch.setenv("GROQ_API_KEY", "dummy-key")
+    settings.cache_clear()
+    with Session(database) as db:
+        issue = db.scalar(select(Issue))
+        db.add(
+            LabelAnalysis(
+                issue_id=issue.id,
+                snapshot_id=issue.snapshot_id,
+                analyzer_key=ai_labels.analyzer_key(db.get(Repository, repo_id)),
+                model=settings().ai_model,
+                status="failed",
+                error="rate_limited",
+                retry_after=utcnow() + timedelta(seconds=600),
+            )
+        )
+        db.commit()
+    response = github_client.post(f"/triage/{repo_id}/analyze", headers=headers)
+    assert response.status_code == 429 and "backoff" in response.json()["error"]["message"]
+    with Session(database) as db:
+        assert db.scalar(select(ConnectionJob)) is None
 
 
 def test_identity_is_verified_and_credentials_are_encrypted(github_client, database, monkeypatch):

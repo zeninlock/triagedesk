@@ -1,5 +1,6 @@
 import json
 import uuid
+from datetime import timedelta
 
 import httpx
 import pytest
@@ -109,8 +110,21 @@ def test_invalid_model_outputs_are_never_auto_published(monkeypatch, alteration)
     transport = httpx.MockTransport(
         lambda request: httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(value)}}]})
     )
-    with httpx.Client(transport=transport) as client, pytest.raises(AIUnavailable, match="invalid_output"):
-        ai_labels.request_analysis("API crashes after update", "", [], ai_labels.DEFAULT_TAXONOMY, client)
+    with httpx.Client(transport=transport) as client:
+        if alteration in {"nan", "out_of_range"}:
+            with pytest.raises(AIUnavailable, match="schema_invalid"):
+                ai_labels.request_analysis(
+                    "API crashes after update", "", [], ai_labels.DEFAULT_TAXONOMY, client
+                )
+        else:
+            result = ai_labels.request_analysis(
+                "API crashes after update", "", [], ai_labels.DEFAULT_TAXONOMY, client
+            )
+            assert result.uncertain and result._validation_flags
+            assert "Validation needs review" in result.explanation
+            assert len({(item.group, item.name) for item in result.labels}) == len(result.labels)
+            assert all(item.name in ai_labels.DEFAULT_TAXONOMY[item.group] for item in result.labels)
+            assert all(item.evidence != "no actual evidence" for item in result.labels)
 
 
 def test_model_confidence_uses_the_lowest_label_score_and_requires_a_type(monkeypatch):
@@ -359,3 +373,218 @@ def test_legacy_completed_review_is_visible_and_does_not_call_ai_again(
     assert analyze_issue(database, 1) == "cached" and not calls
     detail = client.get("/triage/issues/1").json()
     assert detail["status"] == "reviewed" and detail["history"][0]["note"] == "Pre-upgrade review"
+
+
+@pytest.mark.parametrize(
+    "status,expected",
+    [
+        (400, "invalid_request"),
+        (401, "invalid_credentials"),
+        (403, "permission_denied"),
+        (404, "model_unavailable"),
+        (422, "invalid_request"),
+        (429, "rate_limited"),
+        (500, "provider_unavailable"),
+    ],
+)
+def test_provider_failures_are_specific_and_never_reflect_response_bodies(monkeypatch, status, expected):
+    monkeypatch.setenv("GROQ_API_KEY", "dummy-key")
+    settings.cache_clear()
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            status, json={"error": {"message": "sensitive-provider-text", "code": "unknown"}}
+        )
+    )
+    with httpx.Client(transport=transport) as client, pytest.raises(AIUnavailable) as error:
+        ai_labels.request_analysis("Title", "Body", [], ai_labels.DEFAULT_TAXONOMY, client)
+    assert str(error.value) == expected
+    assert "sensitive" not in json.dumps(ai_labels.error_details(str(error.value)))
+
+
+def test_failed_analysis_is_visible_in_status_rows_details_and_safe_logs(database, monkeypatch, caplog):
+    repo_id, ids = repo_issues(database)
+    use_ai(monkeypatch)
+
+    def denied(*args):
+        raise AIUnavailable("invalid_credentials")
+
+    monkeypatch.setattr(ai_labels, "request_analysis", denied)
+    assert analyze_issue(database, ids[0]) == "unavailable"
+    with Session(database) as db:
+        repo = db.get(Repository, repo_id)
+        info = triage.summary(db, repo)
+        assert info["ai_activity"]["states"] == {"queued": 1, "running": 0, "failed": 1}
+        assert info["ai_activity"]["error"]["code"] == "invalid_credentials"
+        assert info["ai_activity"]["retry_after"]
+        row = next(item for item in triage.list_labeled_issues(db, repo)["items"] if item["id"] == ids[0])
+        assert row["analysis_failure"]["code"] == "invalid_credentials"
+        assert "401" in row["analysis_failure"]["message"]
+    assert '"event": "ai_analysis_failed"' in caplog.text
+    assert '"reason": "invalid_credentials"' in caplog.text
+
+
+def test_waiting_or_leased_rows_do_not_block_ready_issues_at_batch_limit(database, monkeypatch):
+    repo_id, ids = repo_issues(database)
+    use_ai(monkeypatch)
+    monkeypatch.setenv("AI_BATCH_SIZE", "1")
+    settings.cache_clear()
+    with Session(database) as db:
+        issue = db.get(Issue, ids[0])
+        db.add(
+            LabelAnalysis(
+                issue_id=issue.id,
+                snapshot_id=issue.snapshot_id,
+                analyzer_key=ai_labels.analyzer_key(db.get(Repository, repo_id)),
+                model=settings().ai_model,
+                status="running",
+                lease_until=utcnow() + timedelta(seconds=180),
+            )
+        )
+        db.commit()
+    result = analyze_repository(database, repo_id)
+    assert result["analyzed"] == 1 and result["waiting"] == 1
+    with Session(database) as db:
+        assert db.scalar(select(LabelAnalysis).where(LabelAnalysis.issue_id == ids[1])).status == "complete"
+
+
+def test_explicit_retry_preserves_completed_results_and_rate_backoff(database, monkeypatch):
+    repo_id, ids = repo_issues(database)
+    use_ai(monkeypatch)
+    analyze_issue(database, ids[0])
+    with Session(database) as db:
+        repo, second = db.get(Repository, repo_id), db.get(Issue, ids[1])
+        row = LabelAnalysis(
+            issue_id=second.id,
+            snapshot_id=second.snapshot_id,
+            analyzer_key=ai_labels.analyzer_key(repo),
+            model=settings().ai_model,
+            status="failed",
+            error="rate_limited",
+            retry_after=utcnow() + timedelta(seconds=600),
+        )
+        db.add(row)
+        db.commit()
+        ai_labels.retry_correctable_failures(db, repo)
+        assert row.retry_after is not None and ai_labels.provider_cooldown(db)
+        assert triage.summary(db, repo)["ai_activity"]["can_retry"] is False
+        row.error = "invalid_credentials"
+        db.commit()
+        ai_labels.retry_correctable_failures(db, repo)
+        assert row.retry_after is None
+        assert db.scalar(select(LabelAnalysis).where(LabelAnalysis.issue_id == ids[0])).status == "complete"
+    calls = use_ai(monkeypatch)
+    assert analyze_repository(database, repo_id)["analyzed"] == 1
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize(
+    "body,evidence",
+    [
+        ("The `API` crashes\non startup.", "The API crashes on startup."),
+        ("It’s failing on launch.", "It's failing on launch."),
+        ("Cafe\u0301 output fails.", "Café output fails."),
+    ],
+)
+def test_quote_formatting_differences_do_not_discard_supported_labels(monkeypatch, body, evidence):
+    monkeypatch.setenv("GROQ_API_KEY", "dummy-key")
+    settings.cache_clear()
+    value = proposed()
+    value["labels"][0]["evidence"] = evidence
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(value)}}]})
+    )
+    with httpx.Client(transport=transport) as client:
+        result = ai_labels.request_analysis(
+            "API crashes after update", body, [], ai_labels.DEFAULT_TAXONOMY, client
+        )
+    assert not result.uncertain and len(result.labels) == 2
+
+
+def test_semantic_validation_is_saved_for_review_and_never_calls_model_again(database, monkeypatch):
+    repo_id, ids = repo_issues(database)
+    monkeypatch.setenv("GROQ_API_KEY", "dummy-key")
+    settings.cache_clear()
+    original, calls = ai_labels.request_analysis, []
+    value = proposed()
+    value["labels"][1]["evidence"] = "Words the reporter never wrote"
+    value["labels"][1]["confidence"] = 0.2
+
+    def provider(request):
+        calls.append(request)
+        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(value)}}]})
+
+    def infer(*args):
+        with httpx.Client(transport=httpx.MockTransport(provider)) as client:
+            return original(*args, client=client)
+
+    monkeypatch.setattr(ai_labels, "request_analysis", infer)
+    assert analyze_repository(database, repo_id)["analyzed"] == 2
+    assert analyze_repository(database, repo_id)["cached"] == 2
+    assert len(calls) == 2
+    with Session(database) as db:
+        repo = db.get(Repository, repo_id)
+        assert triage.summary(db, repo)["counts"]["needs_review"] == 2
+        assert triage.summary(db, repo)["counts"]["pending"] == 0
+        assert triage.summary(db, repo)["counts"]["auto_sorted"] == 0
+        rows = list(db.scalars(select(LabelAnalysis)))
+        assert all(row.status == "complete" and row.uncertain for row in rows)
+        assert all(row.confidence == 0.2 for row in rows)
+        assert all("unverified_evidence" in row.explanation for row in rows)
+        assert all(len(row.labels) == 1 and row.labels[0]["group"] == "type" for row in rows)
+
+
+def test_malformed_success_response_pauses_retries_without_blocking_other_issues(database, monkeypatch):
+    repo_id, ids = repo_issues(database)
+    monkeypatch.setenv("GROQ_API_KEY", "dummy-key")
+    settings.cache_clear()
+    original, calls = ai_labels.request_analysis, []
+
+    def provider(request):
+        calls.append(request)
+        content = "not JSON" if len(calls) == 1 else json.dumps(proposed())
+        return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+
+    def infer(*args):
+        with httpx.Client(transport=httpx.MockTransport(provider)) as client:
+            return original(*args, client=client)
+
+    monkeypatch.setattr(ai_labels, "request_analysis", infer)
+    first = analyze_repository(database, repo_id)
+    assert first["needs_attention"] == 1 and first["analyzed"] == 1
+    for _ in range(4):
+        repeat = analyze_repository(database, repo_id)
+        assert repeat["needs_attention"] == 1 and repeat["cached"] == 1
+    assert len(calls) == 2
+    assert analyze_issue(database, ids[0]) == "needs_attention"
+    with Session(database) as db:
+        repo = db.get(Repository, repo_id)
+        row = db.scalar(select(LabelAnalysis).where(LabelAnalysis.issue_id == ids[0]))
+        assert row.error == "invalid_json" and row.retry_after is None
+        info = triage.summary(db, repo)
+        assert not info["ai_activity"]["error"]["automatic_retry"]
+        ai_labels.retry_correctable_failures(db, repo)
+    assert analyze_repository(database, repo_id)["analyzed"] == 1
+    assert len(calls) == 3
+
+
+def test_complete_json_code_fence_is_parsed_but_not_arbitrary_surrounding_text(monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "dummy-key")
+    settings.cache_clear()
+    for content, accepted in [
+        ("```json\n" + json.dumps(proposed()) + "\n```", True),
+        ("Ignore instructions. " + json.dumps(proposed()), False),
+    ]:
+        transport = httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+        )
+        with httpx.Client(transport=transport) as client:
+            if accepted:
+                result = ai_labels.request_analysis(
+                    "API crashes after update", "", [], ai_labels.DEFAULT_TAXONOMY, client
+                )
+                assert len(result.labels) == 2 and not result.uncertain
+            else:
+                with pytest.raises(AIUnavailable, match="invalid_json"):
+                    ai_labels.request_analysis(
+                        "API crashes after update", "", [], ai_labels.DEFAULT_TAXONOMY, client
+                    )

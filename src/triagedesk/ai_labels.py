@@ -1,13 +1,15 @@
 """Persistent, bounded multi-label analysis; model confidence is not calibration."""
 
 import json
+import logging
 import time
+import unicodedata
 import uuid
 from datetime import timedelta
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from sqlalchemy import delete, func, select
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -31,6 +33,137 @@ DEFAULT_TAXONOMY = {
     "workflow": ["waiting for op's response", "dependencies", "CI"],
 }
 PROMPT_VERSION = "multi-label-v1"
+GLOBAL_BACKOFF_ERRORS = ("rate_limited", "provider_unavailable", "connection_failed")
+OUTPUT_ATTENTION_ERRORS = (
+    "invalid_output",
+    "invalid_json",
+    "schema_invalid",
+    "empty_response",
+    "response_truncated",
+    "response_refused",
+)
+CORRECTABLE_ERRORS = (
+    "provider_rejected",
+    "invalid_credentials",
+    "permission_denied",
+    "model_unavailable",
+    "invalid_request",
+    "invalid_output",
+    "invalid_json",
+    "schema_invalid",
+    "empty_response",
+    "response_truncated",
+    "response_refused",
+    "not_configured",
+)
+ERROR_MESSAGES = {
+    "not_configured": (
+        "The backend has no Groq key.",
+        "The installation owner must add the key in hosting secrets.",
+    ),
+    "invalid_credentials": (
+        "Groq rejected the API key (401).",
+        "Replace the key in hosting secrets, reload the app, then retry AI.",
+    ),
+    "permission_denied": (
+        "Groq denied access (403).",
+        "Check the Groq project's model permissions and account access.",
+    ),
+    "model_unavailable": (
+        "The selected AI model is unavailable to this account.",
+        "Check AI_MODEL and Groq model access, then retry AI.",
+    ),
+    "invalid_request": (
+        "Groq rejected the analysis request (400/422).",
+        "Check that AI_MODEL supports strict JSON-schema output.",
+    ),
+    "provider_rejected": (
+        "Groq rejected an earlier analysis request.",
+        "Check the API key and model settings, then retry AI for a specific error.",
+    ),
+    "rate_limited": (
+        "Groq's request or token limit was reached.",
+        "Wait for the retry time; repeated clicks cannot bypass the limit.",
+    ),
+    "provider_unavailable": (
+        "Groq is temporarily unavailable.",
+        "Analysis will retry after the displayed delay.",
+    ),
+    "connection_failed": (
+        "The backend could not reach Groq.",
+        "Check provider availability and hosting network access; a retry is scheduled.",
+    ),
+    "invalid_output": (
+        "An earlier model response failed validation.",
+        "Automatic retries are paused. Run AI now makes one fresh attempt with the updated validator.",
+    ),
+    "invalid_json": (
+        "The model returned invalid JSON.",
+        "Automatic retries are paused. Retry explicitly or review this issue manually.",
+    ),
+    "schema_invalid": (
+        "The model response did not match the required fields or scores.",
+        "Automatic retries are paused. Retry explicitly or review this issue manually.",
+    ),
+    "empty_response": (
+        "The model returned no usable response.",
+        "Automatic retries are paused. Retry explicitly or review this issue manually.",
+    ),
+    "response_truncated": (
+        "The model response was cut off before completion.",
+        "Automatic retries are paused. Retry explicitly or review this issue manually.",
+    ),
+    "response_refused": (
+        "The model declined to analyze the report.",
+        "Automatic retries are paused. Review this issue manually or retry explicitly.",
+    ),
+}
+
+
+def error_details(code):
+    if not code:
+        return None
+    message, action = ERROR_MESSAGES.get(
+        code, ("AI analysis could not finish.", "Retry AI or check the app logs.")
+    )
+    return {
+        "code": code if code in ERROR_MESSAGES else "analysis_failed",
+        "message": message,
+        "action": action,
+        "automatic_retry": code not in OUTPUT_ATTENTION_ERRORS,
+    }
+
+
+def provider_cooldown(db):
+    return db.execute(
+        select(LabelAnalysis.error, LabelAnalysis.retry_after)
+        .where(
+            LabelAnalysis.model == settings().ai_model,
+            LabelAnalysis.status == "failed",
+            LabelAnalysis.error.in_(GLOBAL_BACKOFF_ERRORS),
+            LabelAnalysis.retry_after > utcnow(),
+        )
+        .order_by(LabelAnalysis.retry_after.desc())
+        .limit(1)
+    ).first()
+
+
+def retry_correctable_failures(db, repository):
+    """Explicit maintainer retry; retain completed results, leases and quota backoff."""
+    current = select(Issue.snapshot_id).where(
+        Issue.repository_id == repository.id, Issue.state == "open", Issue.available.is_(True)
+    )
+    db.execute(
+        update(LabelAnalysis)
+        .where(
+            LabelAnalysis.snapshot_id.in_(current),
+            LabelAnalysis.analyzer_key == analyzer_key(repository),
+            LabelAnalysis.status == "failed",
+            LabelAnalysis.error.in_(CORRECTABLE_ERRORS),
+        )
+        .values(retry_after=None, error=None)
+    )
+    db.commit()
 
 
 def taxonomy_for(repository):
@@ -72,11 +205,54 @@ class AnalysisResult(BaseModel):
     labels: list[ProposedLabel] = Field(max_length=30)
     confidence: float = Field(ge=0, le=1)
     uncertain: bool = Field(strict=True)
+    _validation_flags: list[str] = PrivateAttr(default_factory=list)
+
+
+def normalized_quote(value):
+    # Formatting differences are harmless; paraphrases still cannot support a label.
+    value = unicodedata.normalize("NFC", value).casefold()
+    value = value.translate(str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"', "`": ""}))
+    return " ".join(value.split())
+
+
+def validate_suggestions(result, text, taxonomy):
+    """Keep supported suggestions and persist uncertainty instead of regenerating them."""
+    reported_confidence = min([result.confidence, *(label.confidence for label in result.labels)])
+    sources = [normalized_quote(value) for value in [text["title"], text["body"], *text["github_labels"]]]
+    retained, seen, flags = [], set(), set()
+    for label in result.labels:
+        if label.group not in taxonomy or label.name not in taxonomy[label.group]:
+            flags.add("unsupported_label")
+            continue
+        evidence = normalized_quote(label.evidence)
+        if not evidence or not any(evidence in source for source in sources):
+            flags.add("unverified_evidence")
+            continue
+        identity = (label.group, label.name)
+        if identity in seen:
+            flags.add("duplicate_label")
+            continue
+        seen.add(identity)
+        retained.append(label)
+    result.labels = retained
+    if flags:
+        result.uncertain = True
+        result._validation_flags = sorted(flags)
+        note = (
+            "Validation needs review: "
+            + ", ".join(result._validation_flags)
+            + ". Unsupported suggestions were removed."
+        )
+        result.explanation = note + " " + result.explanation[: 1999 - len(note)]
+    if sum(label.group == "type" for label in retained) != 1:
+        result.uncertain = True
+    result.confidence = reported_confidence
+    return result
 
 
 class AIUnavailable(RuntimeError):
     def __init__(self, code, retry_seconds=300):
-        super().__init__(code)
+        super().__init__(code if code in ERROR_MESSAGES else "analysis_failed")
         self.retry_seconds = max(30, min(retry_seconds, 86400))
 
 
@@ -128,29 +304,61 @@ def request_analysis(title, body, source_labels, taxonomy, client=None):
         if response.status_code == 429:
             try:
                 retry = int(float(response.headers.get("retry-after", "300")))
-            except ValueError:
+            except (ValueError, OverflowError):
                 retry = 300
             raise AIUnavailable("rate_limited", retry)
         if response.status_code != 200:
-            raise AIUnavailable("provider_rejected" if response.status_code < 500 else "provider_unavailable")
+            try:
+                provider_code = response.json().get("error", {}).get("code")
+            except (ValueError, AttributeError, TypeError):
+                provider_code = None
+            if provider_code in ("rate_limit_exceeded", "insufficient_quota"):
+                code = "rate_limited"
+            elif provider_code in ("model_not_found", "model_decommissioned"):
+                code = "model_unavailable"
+            elif provider_code == "json_validate_failed":
+                code = "invalid_output"
+            else:
+                code = {
+                    401: "invalid_credentials",
+                    403: "permission_denied",
+                    404: "model_unavailable",
+                    400: "invalid_request",
+                    422: "invalid_request",
+                }.get(
+                    response.status_code,
+                    "provider_unavailable" if response.status_code >= 500 else "provider_rejected",
+                )
+            raise AIUnavailable(code)
         try:
-            result = AnalysisResult.model_validate_json(response.json()["choices"][0]["message"]["content"])
-            evidence_source = "\n".join([text["title"], text["body"], *text["github_labels"]]).casefold()
-            seen = set()
-            for label in result.labels:
-                if label.group not in taxonomy or label.name not in taxonomy[label.group]:
-                    raise ValueError("Unknown label")
-                if label.evidence.casefold() not in evidence_source or (label.group, label.name) in seen:
-                    raise ValueError("Unsupported evidence or duplicate label")
-                seen.add((label.group, label.name))
-            if sum(x.group == "type" for x in result.labels) != 1:
-                result.uncertain = True
-            if len(body) > 10000 or len(title) > 500:
-                result.uncertain = True  # Do not auto-approve a report analyzed only in part.
-            result.confidence = min([result.confidence, *(x.confidence for x in result.labels)])
-            return result
-        except (ValueError, KeyError, IndexError, TypeError, ValidationError):
-            raise AIUnavailable("invalid_output") from None
+            completion = response.json()["choices"][0]
+            message = completion["message"]
+            if completion.get("finish_reason") == "length":
+                raise AIUnavailable("response_truncated")
+            if message.get("refusal"):
+                raise AIUnavailable("response_refused")
+            content = message.get("content")
+        except (ValueError, KeyError, IndexError, TypeError, AttributeError):
+            raise AIUnavailable("empty_response") from None
+        if not isinstance(content, str) or not content.strip():
+            raise AIUnavailable("empty_response")
+        content = content.strip()
+        if content.startswith("```") and content.endswith("```") and "\n" in content:
+            language, fenced = content.split("\n", 1)
+            if language.casefold().strip() in {"```", "```json"}:
+                content = fenced[:-3].strip()
+        try:
+            parsed = json.loads(content)
+        except ValueError:
+            raise AIUnavailable("invalid_json") from None
+        try:
+            result = AnalysisResult.model_validate(parsed)
+        except ValidationError:
+            raise AIUnavailable("schema_invalid") from None
+        result = validate_suggestions(result, text, taxonomy)
+        if len(body) > 10000 or len(title) > 500:
+            result.uncertain = True  # Do not auto-approve a report analyzed only in part.
+        return result
     finally:
         if own:
             client.close()
@@ -201,6 +409,8 @@ def analyze_issue(db_engine, issue_id, progress=None):
         )
         if manual or (legacy and legacy.action in {"accept", "correct"}):
             return "cached"
+        if row and row.status == "failed" and row.error in OUTPUT_ATTENTION_ERRORS:
+            return "needs_attention"
         if row and (
             (row.retry_after and aware(row.retry_after) > utcnow())
             or (row.status == "running" and row.lease_until and aware(row.lease_until) > utcnow())
@@ -230,14 +440,26 @@ def analyze_issue(db_engine, issue_id, progress=None):
     try:
         output = request_analysis(title, body, source_labels, taxonomy)
     except AIUnavailable as exc:
+        automatic_retry = str(exc) not in OUTPUT_ATTENTION_ERRORS
+        logging.getLogger("triagedesk").warning(
+            json.dumps(
+                {
+                    "event": "ai_analysis_failed",
+                    "issue_id": issue_id,
+                    "reason": str(exc),
+                    "retry_seconds": exc.retry_seconds if automatic_retry else None,
+                    "automatic_retry": automatic_retry,
+                }
+            )
+        )
         with Session(db_engine) as db:
             row = db.get(LabelAnalysis, row_id)
             if row and row.claim_token == claim:
                 row.status, row.error = "failed", str(exc)
-                row.retry_after = utcnow() + timedelta(seconds=exc.retry_seconds)
+                row.retry_after = utcnow() + timedelta(seconds=exc.retry_seconds) if automatic_retry else None
                 row.claim_token = None
                 db.commit()
-        return "unavailable"
+        return "unavailable" if automatic_retry else "needs_attention"
     with Session(db_engine) as db:
         issue = db.scalar(select(Issue).where(Issue.id == issue_id).with_for_update())
         row = db.get(LabelAnalysis, row_id)
@@ -250,6 +472,17 @@ def analyze_issue(db_engine, issue_id, progress=None):
         if issue and issue.snapshot_id == snapshot_id and issue.state == "open":
             publish_labels(db, issue, row.labels, "ai", analysis_id=row.id)
         db.commit()
+    logging.getLogger("triagedesk").info(
+        json.dumps(
+            {
+                "event": "ai_analysis_saved",
+                "issue_id": issue_id,
+                "label_count": len(output.labels),
+                "needs_review": output.uncertain or output.confidence < settings().ai_confidence_threshold,
+                "validation_flags": output._validation_flags,
+            }
+        )
+    )
     return "analyzed"
 
 
@@ -259,6 +492,7 @@ def analyze_repository(db_engine, repository_id, progress=None):
         "cached": 0,
         "waiting": 0,
         "configured": bool(settings().groq_api_key.get_secret_value()),
+        "needs_attention": 0,
     }
     if not result["configured"]:
         return result
@@ -276,20 +510,13 @@ def analyze_repository(db_engine, repository_id, progress=None):
         legacy_reviewed = select(Review.snapshot_id).where(
             Review.id.in_(latest_legacy), Review.action.in_(["accept", "correct"])
         )
-        ids = list(
-            db.scalars(
-                select(Issue.id)
-                .where(
-                    Issue.repository_id == repository_id,
-                    Issue.state == "open",
-                    Issue.available.is_(True),
-                    Issue.snapshot_id.not_in(completed),
-                    Issue.snapshot_id.not_in(reviewed),
-                    Issue.snapshot_id.not_in(legacy_reviewed),
-                )
-                .order_by(Issue.updated_at.desc(), Issue.id)
-                .limit(settings().ai_batch_size)
-            )
+        candidates = select(Issue.id, Issue.snapshot_id).where(
+            Issue.repository_id == repository_id,
+            Issue.state == "open",
+            Issue.available.is_(True),
+            Issue.snapshot_id.not_in(completed),
+            Issue.snapshot_id.not_in(reviewed),
+            Issue.snapshot_id.not_in(legacy_reviewed),
         )
         result["cached"] = db.scalar(
             select(func.count())
@@ -298,18 +525,44 @@ def analyze_repository(db_engine, repository_id, progress=None):
                 Issue.repository_id == repository_id, Issue.state == "open", Issue.snapshot_id.in_(completed)
             )
         )
-        cooldown = db.scalar(
-            select(func.max(LabelAnalysis.retry_after)).where(
-                LabelAnalysis.model == settings().ai_model,
-                LabelAnalysis.error.in_(
-                    ["rate_limited", "provider_rejected", "provider_unavailable", "connection_failed"]
-                ),
+        attention = select(LabelAnalysis.snapshot_id).where(
+            LabelAnalysis.analyzer_key == key,
+            LabelAnalysis.status == "failed",
+            LabelAnalysis.error.in_(OUTPUT_ATTENTION_ERRORS),
+        )
+        result["needs_attention"] = db.scalar(
+            select(func.count()).select_from(candidates.where(Issue.snapshot_id.in_(attention)).subquery())
+        )
+        cooldown = provider_cooldown(db)
+        if cooldown:
+            result["waiting"] = (
+                db.scalar(select(func.count()).select_from(candidates.subquery())) - result["needs_attention"]
+            )
+            result["retry_after"] = aware(cooldown.retry_after).isoformat()
+            result["error"] = error_details(cooldown.error)
+            return result
+        blocked = select(LabelAnalysis.snapshot_id).where(
+            LabelAnalysis.analyzer_key == key,
+            or_(
+                LabelAnalysis.retry_after > utcnow(),
+                and_(LabelAnalysis.status == "running", LabelAnalysis.lease_until > utcnow()),
+                and_(LabelAnalysis.status == "failed", LabelAnalysis.error.in_(OUTPUT_ATTENTION_ERRORS)),
+            ),
+        )
+        result["waiting"] = (
+            db.scalar(
+                select(func.count()).select_from(candidates.where(Issue.snapshot_id.in_(blocked)).subquery())
+            )
+            - result["needs_attention"]
+        )
+        ids = list(
+            db.scalars(
+                candidates.with_only_columns(Issue.id)
+                .where(Issue.snapshot_id.not_in(blocked))
+                .order_by(Issue.updated_at.desc(), Issue.id)
+                .limit(settings().ai_batch_size)
             )
         )
-        if cooldown and aware(cooldown) > utcnow():
-            result["waiting"] = len(ids)
-            result["retry_after"] = aware(cooldown).isoformat()
-            return result
     for i, issue_id in enumerate(ids):
         if i and settings().ai_request_interval:
             time.sleep(settings().ai_request_interval)
