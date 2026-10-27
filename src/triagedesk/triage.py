@@ -84,6 +84,7 @@ def scope(repository):
         a.id.label("analysis_id"),
         a.status.label("analysis_status"),
         a.confidence,
+        a.uncertain.label("analysis_uncertain"),
         a.summary,
         a.explanation,
         a.error.label("analysis_error"),
@@ -125,6 +126,14 @@ def labels_for_rows(db, rows):
         )
     for item in items.values():
         item["analysis_failure"] = error_details(item["analysis_error"])
+        item["review_reason"] = ""
+        if item["status"] == "needs_review":
+            if (item["explanation"] or "").startswith("Validation needs review:"):
+                item["review_reason"] = "Some supporting details could not be verified."
+            elif item["analysis_uncertain"]:
+                item["review_reason"] = "The classification is marked uncertain."
+            else:
+                item["review_reason"] = "AI confidence is below the configured cutoff."
         if item["status"] == "reviewed" and not item["label_review_id"] and item["legacy_category"]:
             item["labels"] = [{"group": "type", "name": item["legacy_category"], "confidence": None}]
     return list(items.values())

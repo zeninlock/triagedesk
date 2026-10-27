@@ -2,6 +2,8 @@
 
 Version **0.3.3** fixes a response-validation and retry loop. It includes the earlier secrets and progress fixes.
 
+For high-confidence results that still lost every label because of the quotation check, use **version 0.3.4** and [the reference-based label upgrade](AI_LABEL_REFERENCES.md). That version includes this retry fix and removes the need for model-written quotations.
+
 The previous classifier discarded the entire response when any proposed label had an unknown name/group, a repeated label, or evidence that did not match the issue text exactly. It saved `invalid_output`, waited five minutes, then asked the model again. The model request used temperature zero and the same input, so another request could reproduce the same rejected suggestion indefinitely. A successful provider HTTP response therefore did not imply a saved analysis.
 
 ## Result handling now

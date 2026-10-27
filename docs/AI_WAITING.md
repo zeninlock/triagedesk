@@ -1,5 +1,7 @@
 # Issues stay “Waiting for AI”
 
+For completed high-confidence results displaying **Choose labels in review**, follow [the version-0.3.4 label-reference fix](AI_LABEL_REFERENCES.md).
+
 Imported issues and completed AI analyses are separate stages. A Groq key being loaded confirms configuration presence; the provider can still reject a request, enforce a quota, or be unreachable. Before version 0.3.2, the issue table displayed all these cases as **Waiting for AI**, and automatic synchronization errors were suppressed. Provider failures were saved in PostgreSQL without a corresponding application warning in the logs.
 
 Version **0.3.3** also fixes a successful-response rejection loop: questionable suggestions are cached for review, and unusable responses stop regenerating automatically. Read [validation recovery](AI_VALIDATION_FIX.md) when API call counts rise without saved analyses.

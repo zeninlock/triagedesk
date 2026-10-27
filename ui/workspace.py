@@ -151,7 +151,8 @@ def issue_table(repository_id, api, key, status="all", group=None, label=None):
                 else STATUS_TITLES[item["status"]]
             ),
             "AI confidence": f"{item['confidence']:.0%}" if item["confidence"] is not None else "—",
-            "AI details": (item.get("analysis_failure") or {}).get("message", ""),
+            "AI details": (item.get("analysis_failure") or {}).get("message")
+            or item.get("review_reason", ""),
         }
         for item in data["items"]
     ]

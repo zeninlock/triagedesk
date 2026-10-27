@@ -67,3 +67,11 @@ Read the provider dashboard and queried the hosted database with SELECT during t
 Fixed the classifier discarding an entire usable response and retrying indefinitely. Evidence formatting is normalized conservatively; unsupported suggestions are removed and the result is saved as uncertain for human review. Invalid response structures pause automatic retries. The cache identity and existing successful/human decisions remain unchanged. The exact offending field in historical responses is unavailable because those bodies were discarded.
 
 Verified 140 local tests including 14 PostgreSQL cases. A PostgreSQL regression reproduces two reviewed reports beside three legacy invalid_output failures, explicitly retries those three, then verifies saved Needs review results and zero further provider calls on repeated passes. Provider responses in these regression tests are simulated; the updated hosted behavior still requires deployment and verification.
+
+## Version 0.3.4 — 27 October 2026
+
+Confirmed in the running UI that the model explained issue #4 as an enhancement at 95% confidence, while the quotation validator removed its label. Replaced model-written quotations with constrained label IDs and numbered source excerpts. The backend inserts the actual source text. The confidence cutoff and explicit uncertainty routing remain unchanged.
+
+Added a new prompt identity, automatic fresh analysis of old empty/quote-rejected results, and reuse of valid older analyses without another provider call. Human decisions and old analysis records remain intact; no schema migration is required.
+
+Verified 149 local tests including 15 PostgreSQL cases. One observed live Qwen playground response selected enhancement for #4 at 0.95 confidence with uncertain=false and source:1; replay through the new parser retained the label and met the cutoff. The playground used JSON-object mode with the schema in its instructions, while the application uses strict JSON-schema mode. Further live issue results and the updated hosted application were not confirmed. No production source or database change was made.

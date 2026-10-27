@@ -172,6 +172,7 @@ def test_review_queue_only_contains_uncertain_results(database, monkeypatch, con
         repo = db.get(Repository, repo_id)
         data = triage.list_labeled_issues(db, repo, expected)
         assert data["total"] == 1 and data["items"][0]["id"] == ids[0]
+        assert bool(data["items"][0]["review_reason"]) == (expected == "needs_review")
         assert triage.summary(db, repo)["counts"]["pending"] == 1
 
 
