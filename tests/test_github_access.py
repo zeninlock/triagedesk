@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from test_ai_labels import proposed
+from test_ai_labels import proposed, provider_response
 
 from triagedesk import ai_labels, authentication, connection_routes, connections
 from triagedesk.api import app
@@ -20,15 +20,17 @@ from triagedesk.models import (
     DeviceLogin,
     Issue,
     LabelAnalysis,
-    Prediction,
     Repository,
     RepositoryAccess,
-    Review,
     utcnow,
 )
 
 TOKEN = "github_test_provider_credential"
+
+
 USER = {"id": 42, "login": "maintainer"}
+
+
 REPO = {
     "id": 77,
     "full_name": "maintainer/project",
@@ -92,25 +94,29 @@ def test_ai_only_retry_labels_five_issues_without_import_or_search(github_client
     headers = login(github_client)
     repo_id = grant(database)
     pending_issues(database, repo_id)
-    monkeypatch.setenv("GROQ_API_KEY", "dummy-key-never-sent-to-live-provider")
+    monkeypatch.setenv("OPENAI_API_KEY", "dummy-key-never-sent-to-live-provider")
     settings.cache_clear()
     calls = []
     real_client = httpx.Client
+    real_provider = ai_labels.OpenAI
 
     def provider(request):
-        assert request.url.host == "api.groq.com"
+        assert request.url.host == "api.openai.com"
         calls.append(request)
-        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(proposed())}}]})
+        return httpx.Response(200, json=provider_response(json.dumps(proposed())))
 
     monkeypatch.setattr(
-        httpx, "Client", lambda **kwargs: real_client(transport=httpx.MockTransport(provider), **kwargs)
+        ai_labels,
+        "OpenAI",
+        lambda **kwargs: real_provider(
+            **{**kwargs, "http_client": real_client(transport=httpx.MockTransport(provider))}
+        ),
     )
 
     def forbidden(*args, **kwargs):
         raise AssertionError("AI-only work must not fetch GitHub issues or rebuild search")
 
     monkeypatch.setattr(connections, "ingest", forbidden)
-    monkeypatch.setattr(connections, "build_index", forbidden)
     response = github_client.post(f"/triage/{repo_id}/analyze", headers=headers)
     assert response.status_code == 202, response.text
     job = github_client.get(f"/connections/jobs/{response.json()['id']}", headers=headers).json()
@@ -139,7 +145,7 @@ def test_ai_retry_requires_connected_maintainer_and_writable_installation(
     assert github_client.post(f"/triage/{repo_id}/analyze").status_code == 401
     assert github_client.post(f"/triage/{other}/analyze", headers=headers).status_code == 403
     assert github_client.post(f"/triage/{repo_id}/analyze", headers=headers).status_code == 503
-    monkeypatch.setenv("GROQ_API_KEY", "dummy-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "dummy-key")
     monkeypatch.setenv("READ_ONLY", "true")
     settings.cache_clear()
     assert github_client.post(f"/triage/{repo_id}/analyze", headers=headers).status_code == 403
@@ -154,7 +160,7 @@ def test_ai_retry_cannot_bypass_provider_backoff(github_client, database, monkey
     headers = login(github_client)
     repo_id = grant(database)
     pending_issues(database, repo_id, 1)
-    monkeypatch.setenv("GROQ_API_KEY", "dummy-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "dummy-key")
     settings.cache_clear()
     with Session(database) as db:
         issue = db.scalar(select(Issue))
@@ -190,9 +196,9 @@ def test_identity_is_verified_and_credentials_are_encrypted(github_client, datab
     assert (
         github_client.post("/auth/token", json={"token": TOKEN, "login": "somebody-else"}).status_code == 422
     )
-    assert github_client.get("/issues").status_code == 401
+    assert github_client.get("/repositories").status_code == 401
     assert (
-        github_client.get("/issues", headers={"Authorization": "Bearer test-review-secret"}).status_code
+        github_client.get("/repositories", headers={"Authorization": "Bearer test-review-secret"}).status_code
         == 401
     )
 
@@ -277,9 +283,8 @@ def test_connected_workspaces_are_scoped_to_verified_user(github_client, databas
     mine = grant(database)
     other = grant(database, user_id=99, repo={**REPO, "id": 78, "full_name": "other/project"})
     assert [r["id"] for r in github_client.get("/repositories", headers=headers).json()] == [mine]
-    assert github_client.get("/issues", headers=headers).status_code == 422
-    assert github_client.get("/issues", headers=headers, params={"repository_id": other}).status_code == 403
-    assert github_client.get("/dashboard", headers=headers, params={"repository_id": mine}).status_code == 200
+    assert github_client.get(f"/triage/{other}/issues", headers=headers).status_code == 403
+    assert github_client.get(f"/triage/{mine}/summary", headers=headers).status_code == 200
 
 
 def mock_ingestion(monkeypatch):
@@ -311,91 +316,6 @@ def mock_ingestion(monkeypatch):
                 headers={"Authorization": "Bearer " + kwargs["token"]},
             )
         ),
-    )
-
-
-def test_connect_imports_categorizes_indexes_and_reviews_provider_payloads(
-    github_client, database, monkeypatch
-):
-    identity_provider(monkeypatch)
-    mock_ingestion(monkeypatch)
-    headers = login(github_client)
-    result = github_client.post(
-        "/connections", headers=headers, json={"repository": "https://github.com/maintainer/project"}
-    )
-    assert result.status_code == 202, result.text
-    job = github_client.get("/connections/jobs/" + result.json()["id"], headers=headers).json()
-    assert job["status"] == "complete", job
-    assert job["result"]["import"]["excluded"] == 1
-    assert job["result"]["categorization"]["categories"] == {"bug": 1, "enhancement": 1, "question": 1}
-    repo_id = job["repository_id"]
-    queue = github_client.get(
-        "/issues", headers=headers, params={"repository_id": repo_id, "category": "bug"}
-    ).json()
-    assert queue["total"] == 1
-    issue = github_client.get(f"/issues/{queue['items'][0]['id']}", headers=headers).json()
-    assert issue["prediction"]["method"] == "source_label"
-    assert issue["prediction"]["scores"] == {}
-    related = github_client.get(f"/issues/{issue['id']}/related", headers=headers).json()
-    assert related["method"] == "tfidf"
-    assert all(row["id"] != issue["id"] for row in related["items"])
-    review = {
-        "snapshot_id": issue["snapshot_id"],
-        "expected_revision": issue["review_revision"],
-        "prediction_id": issue["prediction"]["id"],
-        "action": "accept",
-        "category": "bug",
-        "idempotency_key": "verified-review-1",
-    }
-    assert (
-        github_client.post(f"/issues/{issue['id']}/reviews", headers=headers, json=review).status_code == 201
-    )
-    with Session(database) as db:
-        assert db.scalar(select(Review)).reviewer == "github:maintainer#42"
-        assert len(list(db.scalars(select(Issue)))) == 3
-        assert len(list(db.scalars(select(Prediction)))) == 3
-    # A second synchronization preserves identity and does not duplicate source rows/predictions.
-    result = github_client.post(
-        "/connections", headers=headers, json={"repository": "maintainer/project", "incremental": True}
-    )
-    assert result.status_code == 202
-    with Session(database) as db:
-        assert len(list(db.scalars(select(Issue)))) == 3
-        assert len(list(db.scalars(select(Prediction)))) == 3
-
-
-def test_repository_permissions_are_rechecked_before_review(github_client, database, monkeypatch):
-    org = {**REPO, "owner": {"id": 88, "type": "Organization"}}
-    identity_provider(
-        monkeypatch, repo=org, permission={"permission": "write", "role_name": "maintain", "user": USER}
-    )
-    mock_ingestion(monkeypatch)
-    headers = login(github_client)
-    result = github_client.post("/connections", headers=headers, json={"repository": "maintainer/project"})
-    job = github_client.get("/connections/jobs/" + result.json()["id"], headers=headers).json()
-    row = github_client.get(
-        "/issues", headers=headers, params={"repository_id": job["repository_id"]}
-    ).json()["items"][0]
-    identity_provider(monkeypatch, repo=org)  # GitHub now reports read-only collaborator access.
-    payload = {
-        "snapshot_id": row["snapshot_id"],
-        "expected_revision": row["review_revision"],
-        "action": "correct",
-        "category": "bug",
-        "idempotency_key": "revoked-access-review",
-    }
-    assert (
-        github_client.post(f"/issues/{row['id']}/reviews", headers=headers, json=payload).status_code == 403
-    )
-    with Session(database) as db:
-        grant = db.scalar(select(RepositoryAccess))
-        grant.verified_at = utcnow() - timedelta(minutes=10)
-        db.commit()
-    assert (
-        github_client.get(
-            "/issues", headers=headers, params={"repository_id": job["repository_id"]}
-        ).status_code
-        == 403
     )
 
 
@@ -477,89 +397,93 @@ def test_failed_provider_identity_cannot_create_session(github_client, database,
         assert db.scalar(select(AuthSession)) is None
 
 
-def test_ai_views_and_settings_are_scoped_and_permission_checked(github_client, database, monkeypatch):
-    from triagedesk.ai_labels import DEFAULT_TAXONOMY
-
-    identity_provider(monkeypatch)
-    headers = login(github_client)
-    mine = grant(database)
-    other = grant(database, user_id=99, repo={**REPO, "id": 78, "full_name": "other/project"})
-    assert github_client.get(f"/triage/{mine}/summary").status_code == 401
-    assert github_client.get(f"/triage/{mine}/summary", headers=headers).status_code == 200
-    assert github_client.get(f"/triage/{other}/summary", headers=headers).status_code == 403
-    assert (
-        github_client.put(f"/triage/{other}/taxonomy", headers=headers, json=DEFAULT_TAXONOMY).status_code
-        == 403
-    )
-    org = {**REPO, "owner": {"id": 88, "type": "Organization"}}
-    identity_provider(monkeypatch, repo=org)
-    assert (
-        github_client.put(f"/triage/{mine}/taxonomy", headers=headers, json=DEFAULT_TAXONOMY).status_code
-        == 403
-    )
-    assert github_client.post(f"/triage/{mine}/refresh", headers=headers).status_code == 403
-
-
-def test_login_workspace_refresh_detects_new_issues_closures_and_reuses_ai_cache(
-    github_client, database, monkeypatch
-):
-    from sqlalchemy import func
+def test_connect_imports_and_tags_with_openai(github_client, database, monkeypatch):
     from test_ai_labels import use_ai
 
-    from triagedesk.models import LabelAnalysis
-
     identity_provider(monkeypatch)
+    mock_ingestion(monkeypatch)
     calls = use_ai(monkeypatch)
-    phase, seen_queries = [0], []
-
-    def respond(request):
-        if request.url.path == "/repos/maintainer/project":
-            return httpx.Response(200, json=REPO)
-        seen_queries.append(dict(request.url.params))
-        rows = [raw_issue(1, title="API crashes", body="Previously worked.")]
-        if phase[0]:
-            rows = [
-                {**raw_issue(1, day=1), "state": "closed", "closed_at": utcnow().isoformat()},
-                raw_issue(2, day=1, title="API crashes", body="New report"),
-            ]
-        return httpx.Response(200, json=rows)
-
-    transport = httpx.MockTransport(respond)
-    monkeypatch.setattr(
-        connections,
-        "GitHubClient",
-        lambda **kw: GitHubClient(
-            client=httpx.Client(transport=transport, base_url="https://api.github.com")
-        ),
-    )
     headers = login(github_client)
-    result = github_client.post("/connections", headers=headers, json={"repository": "maintainer/project"})
-    job = github_client.get("/connections/jobs/" + result.json()["id"], headers=headers).json()
+    response = github_client.post("/connections", headers=headers, json={"repository": "maintainer/project"})
+    assert response.status_code == 202
+    job = github_client.get("/connections/jobs/" + response.json()["id"], headers=headers).json()
     assert job["status"] == "complete", job
+    assert job["result"]["import"]["excluded"] == 1 and len(calls) == 3
     repo_id = job["repository_id"]
-    assert len(calls) == 1
-    assert seen_queries[0]["state"] == "open" and seen_queries[0]["direction"] == "desc"
-    # A normal refresh inside the interval does not import or call AI again.
-    assert github_client.post(f"/triage/{repo_id}/refresh", headers=headers).json()["status"] == "idle"
-    with Session(database) as db:
-        last = db.get(ConnectionJob, job["id"])
-        last.created_at -= timedelta(minutes=2)
-        db.commit()
-    # The next login/periodic refresh sees the same issue and reuses its persisted analysis.
-    again = github_client.post(f"/triage/{repo_id}/refresh", headers=headers).json()
-    assert "id" in again
-    assert len(calls) == 1
-    phase[0] = 1
-    with Session(database) as db:
-        last = db.get(ConnectionJob, again["id"])
-        last.created_at -= timedelta(minutes=2)
-        db.commit()
-    updated = github_client.post(f"/triage/{repo_id}/refresh", headers=headers).json()
-    finished = github_client.get("/connections/jobs/" + updated["id"], headers=headers).json()
-    assert finished["status"] == "complete", finished
-    assert finished["result"]["closed_removed"] == 1
-    assert seen_queries[-1]["state"] == "all" and "since" in seen_queries[-1]
-    assert len(calls) == 2
-    with Session(database) as db:
-        assert list(db.scalars(select(Issue.number))) == [2]
-        assert db.scalar(select(func.count()).select_from(LabelAnalysis)) == 1
+    issues = github_client.get(f"/triage/{repo_id}/issues", headers=headers).json()["items"]
+    assert len(issues) == 3
+    assert all(x["work_status"] == "open" and x["status"] == "auto_sorted" for x in issues)
+    again = github_client.post(
+        "/connections", headers=headers, json={"repository": "maintainer/project", "incremental": True}
+    )
+    assert again.status_code == 202 and len(calls) == 3
+
+
+def test_status_is_authorized_idempotent_persistent_and_conflict_checked(
+    github_client, database, monkeypatch
+):
+    identity_provider(monkeypatch)
+    headers = login(github_client)
+    repo_id = grant(database)
+    pending_issues(database, repo_id, 1)
+    item = github_client.get(f"/triage/{repo_id}/issues", headers=headers).json()["items"][0]
+    path = f"/triage/issues/{item['id']}/status"
+    payload = {"status": "in progress", "expected_revision": 0, "idempotency_key": "work-status-first"}
+    assert github_client.put(path, json=payload).status_code == 401
+    assert github_client.put(path, headers=headers, json={**payload, "status": "closed"}).status_code == 422
+    response = github_client.put(path, headers=headers, json=payload)
+    assert response.status_code == 200 and response.json()["revision"] == 1
+    assert github_client.put(path, headers=headers, json=payload).json() == response.json()
+    assert github_client.put(path, headers=headers, json={**payload, "status": "blocked"}).status_code == 409
+    assert (
+        github_client.put(
+            path, headers=headers, json={**payload, "idempotency_key": "stale-work-status"}
+        ).status_code
+        == 409
+    )
+    detail = github_client.get(f"/triage/issues/{item['id']}", headers=headers).json()
+    assert detail["work_status"] == "in progress" and len(detail["activity"]) == 1
+    assert detail["activity"][0]["actor"] == "github:maintainer#42"
+    filtered = github_client.get(
+        f"/triage/{repo_id}/issues", headers=headers, params={"work_status": "blocked"}
+    ).json()
+    assert filtered["total"] == 0
+    # A disconnected user cannot read or change this issue, even with its ID.
+    monkeypatch.setattr(authentication, "github_get", lambda *a: (200, {"id": 99, "login": "outsider"}))
+    outsider = login(github_client)
+    assert github_client.get(f"/triage/issues/{item['id']}", headers=outsider).status_code == 403
+    assert github_client.put(path, headers=outsider, json=payload).status_code == 403
+
+
+def test_revoked_maintainer_permissions_block_status_and_label_writes(github_client, database, monkeypatch):
+    identity_provider(monkeypatch)
+    headers = login(github_client)
+    repo_id = grant(database)
+    pending_issues(database, repo_id, 1)
+    item = github_client.get(f"/triage/{repo_id}/issues", headers=headers).json()["items"][0]
+    identity_provider(monkeypatch, repo={**REPO, "owner": {"type": "Organization", "id": 88}})
+    assert (
+        github_client.put(
+            f"/triage/issues/{item['id']}/status",
+            headers=headers,
+            json={"status": "blocked", "expected_revision": 0, "idempotency_key": "revoked-status-key"},
+        ).status_code
+        == 403
+    )
+    assert (
+        github_client.post(
+            f"/triage/issues/{item['id']}/reviews",
+            headers=headers,
+            json={
+                "labels": [
+                    {"group": "type", "name": "type: bug"},
+                    {"group": "priority", "name": "priority: low"},
+                ],
+                "snapshot_id": item["snapshot_id"],
+                "expected_revision": 0,
+                "taxonomy_hash": "a" * 64,
+                "idempotency_key": "revoked-review-key",
+            },
+        ).status_code
+        == 403
+    )

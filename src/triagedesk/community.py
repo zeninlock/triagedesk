@@ -7,7 +7,6 @@ import os
 import socket
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import urllib.error
@@ -26,15 +25,21 @@ def _backend_configuration(values: Mapping) -> dict[str, str]:
     """Normalize only supported settings; never log this credential-bearing mapping."""
     database = str(values.get("DATABASE_URL", "")).strip()
     key = str(values.get("AUTH_ENCRYPTION_KEY", ""))
-    groq_key = values.get("GROQ_API_KEY") or ""
-    if not isinstance(groq_key, str) or any(char.isspace() for char in groq_key.strip()):
-        raise CommunityStartupError("Set GROQ_API_KEY to one quoted API key, without spaces or line breaks.")
+    openai_key = values.get("OPENAI_API_KEY") or ""
+    if not isinstance(openai_key, str) or any(char.isspace() for char in openai_key.strip()):
+        raise CommunityStartupError(
+            "Set OPENAI_API_KEY to one quoted API key, without spaces or line breaks."
+        )
     if not database.startswith(("postgres://", "postgresql://", "postgresql+psycopg://")):
         raise CommunityStartupError("Set DATABASE_URL to your PostgreSQL connection string in app secrets.")
     if len(key) < 32 or key.startswith("REPLACE_"):
         raise CommunityStartupError("Set AUTH_ENCRYPTION_KEY to a random secret of at least 32 characters.")
+    migration_database = str(values.get("MIGRATION_DATABASE_URL") or database).strip()
+    if not migration_database.startswith(("postgres://", "postgresql://", "postgresql+psycopg://")):
+        raise CommunityStartupError("Set MIGRATION_DATABASE_URL to the direct Neon connection string.")
     return dict(
         DATABASE_URL=database,
+        MIGRATION_DATABASE_URL=migration_database,
         AUTH_ENCRYPTION_KEY=key,
         MODE="real",
         AUTH_MODE="github",
@@ -42,29 +47,27 @@ def _backend_configuration(values: Mapping) -> dict[str, str]:
         ALLOW_TOKEN_LOGIN="true",
         SESSION_HOURS="8",
         GITHUB_CLIENT_ID=str(values.get("GITHUB_CLIENT_ID", "")).strip(),
-        GROQ_API_KEY=groq_key.strip(),
-        AI_MODEL=str(values.get("AI_MODEL", "qwen/qwen3.8-27b")).strip(),
+        OPENAI_API_KEY=openai_key.strip(),
+        AI_MODEL=str(values.get("AI_MODEL", "gpt-4.1-mini")).strip(),
         AI_CONFIDENCE_THRESHOLD=str(values.get("AI_CONFIDENCE_THRESHOLD", 0.85)),
         AI_BATCH_SIZE=str(values.get("AI_BATCH_SIZE", 5)),
-        AI_REQUEST_INTERVAL=str(values.get("AI_REQUEST_INTERVAL", 10)),
+        AI_REQUEST_INTERVAL=str(values.get("AI_REQUEST_INTERVAL", 1)),
         AUTO_SYNC_SECONDS=str(values.get("AUTO_SYNC_SECONDS", 60)),
         GITHUB_TOKEN="",
-        REVIEWER_TOKEN="",
         OMP_NUM_THREADS="1",
         OPENBLAS_NUM_THREADS="1",
     )
 
 
-def backend_environment(values: Mapping, artifacts: Path) -> dict[str, str]:
+def backend_environment(values: Mapping) -> dict[str, str]:
     env = os.environ.copy()
-    env.update(_backend_configuration(values), ARTIFACT_DIR=str(artifacts))
+    env.update(_backend_configuration(values))
     return env
 
 
 class CommunityBackend:
-    def __init__(self, process: subprocess.Popen, artifacts: tempfile.TemporaryDirectory, port: int):
+    def __init__(self, process: subprocess.Popen, port: int):
         self.process = process
-        self.artifacts = artifacts
         self.api_url = f"http://127.0.0.1:{port}"
 
     def stop(self):
@@ -76,7 +79,6 @@ class CommunityBackend:
             except subprocess.TimeoutExpired:
                 self.process.kill()
                 self.process.wait(timeout=5)
-        self.artifacts.cleanup()
 
     def alive(self):
         if self.process.poll() is None:
@@ -117,15 +119,14 @@ class CommunityBackendManager:
 
 def start_backend(values: Mapping, timeout: float = 120) -> CommunityBackend:
     """Migrate once, start one loopback-only API, then wait for database readiness."""
-    artifacts = tempfile.TemporaryDirectory(prefix="triagedesk-community-")
     backend = None
     ready = False
     try:
-        env = backend_environment(values, Path(artifacts.name))
+        env = backend_environment(values)
         subprocess.run(
             [sys.executable, "-m", "alembic", "upgrade", "head"],
             cwd=ROOT,
-            env=env,
+            env={**env, "DATABASE_URL": env["MIGRATION_DATABASE_URL"]},
             check=True,
             capture_output=True,
             timeout=timeout,
@@ -148,7 +149,7 @@ def start_backend(values: Mapping, timeout: float = 120) -> CommunityBackend:
             cwd=ROOT,
             env=env,
         )
-        backend = CommunityBackend(process, artifacts, port)
+        backend = CommunityBackend(process, port)
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if process.poll() is not None:
@@ -171,8 +172,5 @@ def start_backend(values: Mapping, timeout: float = 120) -> CommunityBackend:
             "Startup failed. Check the database connection in app secrets and reboot."
         ) from None
     finally:
-        if not ready:
-            if backend is None:
-                artifacts.cleanup()
-            else:
-                backend.stop()
+        if not ready and backend is not None:
+            backend.stop()

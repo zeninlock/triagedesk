@@ -1,61 +1,27 @@
-# Local dependencies and generated Python files
-.venv/
-__pycache__/
-*.pyc
-*.egg-info/
-build/
-dist/
-
-# Test and editor caches
-.pytest_cache/
-.ruff_cache/
-.coverage
-htmlcov/
-.DS_Store
-
-# Local settings; commit demonstration templates only
+# Private settings and credentials
 .env
 .env.*
-!.env.example
-!.env.*.example
 .streamlit/secrets.toml
-
-# Generated datasets, models, databases, and logs
-artifacts/
-data/
-*.joblib
-*.pkl
-*.pickle
-*.pt
-*.pth
-*.safetensors
-*.db
-*.db-*
-*.dump
-*.dump.*
-*.log
-
-# Separately distributed runtime bundle and source packages
-triagedesk-real-data*.tar.gz
-triagedesk*.zip
-
-# Local notes, generated verification reports, and private key files
-.local-notes/
-test-results*.xml
-evidence/*.xml
-evidence/*smoke*.json
-evidence/*verification*.json
-evidence/*check*.json
-evidence/*schema*.json
-evidence/clean-start.json
-evidence/compose-services.json
-evidence/live-public-import-v02.json
-evidence/backup-restore.json
-.coverage.*
-*.sqlite
-*.sqlite3
 *.pem
 *.key
 *.p12
 *.pfx
-.ssh/
+
+# Generated Python and test files
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage*
+htmlcov/
+test-results*.xml
+build/
+dist/
+.DS_Store
+*.log
+*.db
+*.sqlite*
+*.dump*
+triagedesk*.zip

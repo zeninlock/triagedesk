@@ -28,8 +28,6 @@ DB = Annotated[Session, Depends(get_session)]
 
 
 def current_principal(db: DB, credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(scheme)]):
-    if settings().auth_mode == "local":
-        return None
     if not credentials:
         raise HTTPException(401, "Sign in with GitHub to continue", headers={"WWW-Authenticate": "Bearer"})
     return principal_for(db, credentials.credentials)

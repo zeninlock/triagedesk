@@ -139,7 +139,7 @@ def upsert_issue(session, repository, raw):
     labels = sorted(label["name"] if isinstance(label, dict) else label for label in raw.get("labels", []))
     title, body = raw["title"], raw.get("body") or ""
     updated_at = parse_time(raw["updated_at"])
-    snapshot_hash = digest([title, body, labels, updated_at.isoformat()])
+    snapshot_hash = digest([title, body, labels])
     text_hash = content_hash(title, body)
     is_new = issue is None
     if issue and aware(issue.updated_at) > updated_at:
@@ -161,9 +161,11 @@ def upsert_issue(session, repository, raw):
         session.add(issue)
         session.flush()
     old_snapshot_id = issue.snapshot_id
-    snapshot = session.scalar(
-        select(Snapshot).where(Snapshot.issue_id == issue.id, Snapshot.snapshot_hash == snapshot_hash)
-    )
+    snapshot = session.get(Snapshot, issue.snapshot_id) if issue.snapshot_id else None
+    if snapshot is None or (snapshot.title, snapshot.body, snapshot.labels) != (title, body, labels):
+        snapshot = session.scalar(
+            select(Snapshot).where(Snapshot.issue_id == issue.id, Snapshot.snapshot_hash == snapshot_hash)
+        )
     if snapshot is None:
         snapshot = Snapshot(
             issue_id=issue.id,

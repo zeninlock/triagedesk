@@ -1,4 +1,3 @@
-import hmac
 import json
 import logging
 import time
@@ -18,56 +17,31 @@ from triagedesk.ai_labels import (
     provider_cooldown,
     retry_correctable_failures,
     taxonomy_for,
-    validate_taxonomy,
 )
 from triagedesk.authentication import Principal, authorize_repository_write, principal_for, require_connection
 from triagedesk.config import settings
 from triagedesk.connection_routes import Actor
 from triagedesk.connection_routes import router as connection_router
 from triagedesk.db import get_session
-from triagedesk.models import ImportRun, Issue, Prediction, Repository, RepositoryAccess, Review
-from triagedesk.queries import dashboard, issue_scope, list_issues
-from triagedesk.reviews import submit_judgment, submit_review
-from triagedesk.schemas import (
-    DashboardSummary,
-    IssueDetail,
-    IssueFilters,
-    IssuePage,
-    JudgmentInput,
-    ModelSummary,
-    RelatedResults,
-    RepositoryOut,
-    ReviewHistory,
-    ReviewInput,
-    SavedJudgment,
-    SavedReview,
-    Suggestion,
-    TextInput,
-)
+from triagedesk.models import ImportRun, Issue, IssueActivity, Repository, RepositoryAccess
 
 app = FastAPI(
-    title="TriageDesk", version="0.3.4", description="Human-reviewed triage. GitHub operations are read-only."
+    title="TriageDesk", version="1.0.0", description="Human-reviewed triage. GitHub operations are read-only."
 )
 app.include_router(connection_router)
 log = logging.getLogger("triagedesk")
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 auth = HTTPBearer(auto_error=False)
 DB = Annotated[Session, Depends(get_session)]
-Filters = Annotated[IssueFilters, Query()]
 
 
 def writer(db: DB, credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(auth)]):
     config = settings()
     if config.read_only:
         raise HTTPException(403, "This installation is read-only")
-    if config.auth_mode == "github":
-        if not credentials:
-            raise HTTPException(401, "GitHub sign-in required")
-        return principal_for(db, credentials.credentials)
-    expected = config.reviewer_token.get_secret_value()
-    if not expected or not credentials or not hmac.compare_digest(credentials.credentials, expected):
-        raise HTTPException(401, "Reviewer access token required", headers={"WWW-Authenticate": "Bearer"})
-    return config.reviewer_name
+    if not credentials:
+        raise HTTPException(401, "GitHub sign-in required")
+    return principal_for(db, credentials.credentials)
 
 
 @app.middleware("http")
@@ -124,7 +98,7 @@ def active_issue(session, issue_id, actor=None):
     if not issue or not issue.available:
         raise HTTPException(404, "Issue not found or no longer available")
     repo = session.get(Repository, issue.repository_id)
-    if repo.synthetic != (settings().mode == "fixture"):
+    if repo.synthetic:
         raise HTTPException(404, "Issue not in the active data mode")
     require_connection(session, actor, issue.repository_id)
     return issue
@@ -141,7 +115,7 @@ def ready(db: DB):
         db.execute(text("SELECT 1"))
         db.execute(select(Repository.id).limit(1))
         version = db.execute(text("SELECT version_num FROM alembic_version")).scalar()
-        if version != "0003":
+        if version != "0004":
             raise HTTPException(503, "Database migration required")
     except SQLAlchemyError:
         raise HTTPException(503, "Database unavailable or migrations missing") from None
@@ -153,23 +127,22 @@ def meta():
     return {
         "name": "TriageDesk",
         "mode": settings().mode,
-        "writes_enabled": not settings().read_only
-        and (settings().auth_mode == "github" or bool(settings().reviewer_token.get_secret_value())),
+        "writes_enabled": not settings().read_only,
         "auth_mode": settings().auth_mode,
         "github_browser_login": bool(settings().github_client_id),
         "token_login": settings().allow_token_login,
         "connection_limit": 3000,
         "scores": "Model scores are not calibrated probabilities",
         "github_writes": False,
-        "ai_configured": bool(settings().groq_api_key.get_secret_value()),
+        "ai_configured": bool(settings().openai_api_key.get_secret_value()),
         "ai_confidence_threshold": settings().ai_confidence_threshold,
         "auto_sync_seconds": settings().auto_sync_seconds,
     }
 
 
-@app.get("/repositories", response_model=list[RepositoryOut])
+@app.get("/repositories")
 def repositories(db: DB, actor: Actor):
-    query = select(Repository).where(Repository.synthetic == (settings().mode == "fixture"))
+    query = select(Repository).where(Repository.synthetic.is_(False))
     if actor:
         query = query.join(RepositoryAccess).where(RepositoryAccess.github_user_id == actor.github_user_id)
     repos = db.scalars(query)
@@ -187,139 +160,12 @@ def repositories(db: DB, actor: Actor):
     ]
 
 
-@app.get("/issues", response_model=IssuePage)
-def issues(db: DB, filters: Filters, actor: Actor):
-    require_connection(db, actor, filters.repository_id)
-    return list_issues(db, filters, settings().mode)
-
-
-@app.get("/issues/{issue_id}", response_model=IssueDetail)
-def issue_detail(issue_id: int, db: DB, actor: Actor):
-    issue = active_issue(db, issue_id, actor)
-    row = (
-        db.execute(issue_scope(IssueFilters(), settings().mode).where(Issue.id == issue_id)).mappings().one()
-    )
-    result = dict(row)
-    result.update(
-        body=issue.body,
-        labels=issue.labels,
-        content_hash=issue.content_hash,
-        ingested_at=issue.ingested_at,
-        closed_at=issue.closed_at,
-    )
-    prediction = db.get(Prediction, result["prediction_id"]) if result["prediction_id"] else None
-    result["prediction"] = (
-        {
-            "id": prediction.id,
-            "category": prediction.category,
-            "scores": prediction.scores,
-            "max_score": prediction.max_score,
-            "needs_review": prediction.needs_review,
-            "model_version": prediction.model_version,
-            "created_at": prediction.created_at,
-            "input_hash": prediction.input_hash,
-            "method": prediction.method,
-            "explanation": prediction.explanation,
-        }
-        if prediction
-        else None
-    )
-    return result
-
-
-@app.get("/issues/{issue_id}/reviews", response_model=list[ReviewHistory])
-def history(issue_id: int, db: DB, actor: Actor):
-    active_issue(db, issue_id, actor)
-    rows = db.scalars(select(Review).where(Review.issue_id == issue_id).order_by(Review.id.desc()).limit(100))
-    return [
-        {
-            "id": r.id,
-            "snapshot_id": r.snapshot_id,
-            "prediction_id": r.prediction_id,
-            "action": r.action,
-            "category": r.category,
-            "note": r.note,
-            "reviewer": r.reviewer,
-            "revision": r.revision,
-            "created_at": r.created_at,
-        }
-        for r in rows
-    ]
-
-
-@app.post("/issues/{issue_id}/reviews", status_code=201, response_model=SavedReview)
-def save_review(issue_id: int, payload: ReviewInput, db: DB, reviewer: Annotated[str, Depends(writer)]):
-    issue = active_issue(db, issue_id, reviewer if isinstance(reviewer, Principal) else None)
-    if isinstance(reviewer, Principal):
-        authorize_repository_write(db, reviewer, issue.repository_id)
-        reviewer = f"github:{reviewer.login}#{reviewer.github_user_id}"
-    review = submit_review(db, issue, payload, reviewer)
-    return {
-        "id": review.id,
-        "revision": review.revision,
-        "action": review.action,
-        "category": review.category,
-        "created_at": review.created_at,
-    }
-
-
-@app.post("/issues/{issue_id}/judgments", status_code=201, response_model=SavedJudgment)
-def save_judgment(issue_id: int, payload: JudgmentInput, db: DB, reviewer: Annotated[str, Depends(writer)]):
-    actor = reviewer if isinstance(reviewer, Principal) else None
-    issue = active_issue(db, issue_id, actor)
-    candidate = active_issue(db, payload.candidate_issue_id, actor)
-    if actor:
-        authorize_repository_write(db, actor, issue.repository_id)
-        reviewer = f"github:{actor.login}#{actor.github_user_id}"
-    result = submit_judgment(db, issue, candidate, payload, reviewer)
-    return {"id": result.id, "judgment": result.judgment, "purpose": result.purpose}
-
-
-@app.get("/dashboard", response_model=DashboardSummary)
-def summary(db: DB, filters: Filters, actor: Actor):
-    require_connection(db, actor, filters.repository_id)
-    return dashboard(db, filters, settings().mode)
-
-
-@app.post("/classify", response_model=Suggestion)
-def classify(payload: TextInput, db: DB, actor: Actor):
-    from triagedesk.serving import classify_text
-
-    require_connection(db, actor, payload.repository_id)
-    return classify_text(payload.title, payload.body)
-
-
-@app.post("/related", response_model=RelatedResults)
-def related_text(
-    payload: TextInput, db: DB, actor: Actor, method: Literal["auto", "tfidf", "semantic"] = "auto"
-):
-    from triagedesk.retrieval import retrieve
-
-    require_connection(db, actor, payload.repository_id)
-    return retrieve(db, payload.title, payload.body, payload.repository_id, method=method)
-
-
-@app.get("/issues/{issue_id}/related", response_model=RelatedResults)
-def related(issue_id: int, db: DB, actor: Actor, method: Literal["auto", "tfidf", "semantic"] = "auto"):
-    from triagedesk.retrieval import retrieve
-
-    issue = active_issue(db, issue_id, actor)
-    return retrieve(db, issue.title, issue.body, issue.repository_id, exclude_id=issue.id, method=method)
-
-
-@app.get("/models", response_model=ModelSummary)
-def models(actor: Actor):
-    from triagedesk.serving import model_metadata
-
-    return model_metadata()
-
-
 @app.get("/imports")
 def import_status(db: DB, actor: Actor):
     query = (
         select(ImportRun, Repository.full_name)
         .join(Repository)
-        .where(Repository.synthetic == (settings().mode == "fixture"))
+        .where(Repository.synthetic.is_(False))
         .order_by(ImportRun.id.desc())
         .limit(20)
     )
@@ -353,7 +199,7 @@ def import_status(db: DB, actor: Actor):
 def triage_repository(db, repository_id, actor):
     require_connection(db, actor, repository_id)
     repo = db.get(Repository, repository_id)
-    if not repo or repo.synthetic != (settings().mode == "fixture"):
+    if not repo or repo.synthetic:
         raise HTTPException(404, "Repository not found")
     return repo
 
@@ -374,11 +220,12 @@ def labeled_issues(
     search: str = Query("", max_length=200),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    work_status: Literal["open", "in progress", "blocked"] | None = None,
 ):
     repo = triage_repository(db, repository_id, actor)
     if (group and group not in GROUPS) or (label and label not in taxonomy_for(repo).get(group, [])):
-        raise HTTPException(422, "Choose a label in one of the five groups")
-    return triage.list_labeled_issues(db, repo, status, group, label, search, page, page_size)
+        raise HTTPException(422, "Choose a label in one of the four groups")
+    return triage.list_labeled_issues(db, repo, status, group, label, search, page, page_size, work_status)
 
 
 @app.get("/triage/issues/{issue_id}")
@@ -425,20 +272,22 @@ def labeled_issue_detail(issue_id: int, db: DB, actor: Actor):
             .limit(100)
         )
     ]
-    result["history"].extend(
-        {
-            "labels": [{"group": "type", "name": row.category}] if row.category else [],
-            "note": row.note,
-            "reviewer": row.reviewer,
-            "created_at": row.created_at,
-            "snapshot_id": row.snapshot_id,
-        }
-        for row in db.scalars(
-            select(Review).where(Review.issue_id == issue_id).order_by(Review.id.desc()).limit(100)
-        )
-    )
     result["history"].sort(key=lambda row: row["created_at"].timestamp(), reverse=True)
     result["history"] = result["history"][:100]
+    result["activity"] = [
+        {
+            "from_status": row.from_status,
+            "to_status": row.to_status,
+            "actor": row.actor,
+            "created_at": row.created_at,
+        }
+        for row in db.scalars(
+            select(IssueActivity)
+            .where(IssueActivity.issue_id == issue_id)
+            .order_by(IssueActivity.id.desc())
+            .limit(50)
+        )
+    ]
     return result
 
 
@@ -456,20 +305,14 @@ def review_labels(
     return {"id": review.id, "revision": review.revision, "labels": review.labels}
 
 
-@app.put("/triage/{repository_id}/taxonomy")
-def update_label_taxonomy(
-    repository_id: int, payload: dict, db: DB, reviewer: Annotated[str, Depends(writer)]
+@app.put("/triage/issues/{issue_id}/status")
+def update_work_status(
+    issue_id: int, payload: triage.WorkStatusInput, db: DB, reviewer: Annotated[Principal, Depends(writer)]
 ):
-    actor = reviewer if isinstance(reviewer, Principal) else None
-    repo = triage_repository(db, repository_id, actor)
-    if actor:
-        authorize_repository_write(db, actor, repo.id)
-    try:
-        repo.label_taxonomy = validate_taxonomy(payload)
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from None
-    db.commit()
-    return {"taxonomy": repo.label_taxonomy}
+    issue = active_issue(db, issue_id, reviewer)
+    authorize_repository_write(db, reviewer, issue.repository_id)
+    row = triage.save_work_status(db, issue, payload, f"github:{reviewer.login}#{reviewer.github_user_id}")
+    return {"status": row.to_status, "revision": row.revision}
 
 
 @app.post("/triage/{repository_id}/refresh", status_code=202)
@@ -478,11 +321,13 @@ def refresh_workspace(repository_id: int, tasks: BackgroundTasks, db: DB, actor:
 
 
 @app.post("/triage/{repository_id}/analyze", status_code=202)
-def analyze_workspace(repository_id: int, tasks: BackgroundTasks, db: DB, actor: Actor):
-    return schedule_workspace_job(repository_id, tasks, db, actor, ai_only=True)
+def analyze_workspace(
+    repository_id: int, tasks: BackgroundTasks, db: DB, actor: Actor, retry_failed: bool = True
+):
+    return schedule_workspace_job(repository_id, tasks, db, actor, ai_only=True, retry_failed=retry_failed)
 
 
-def schedule_workspace_job(repository_id, tasks, db, actor, ai_only=False):
+def schedule_workspace_job(repository_id, tasks, db, actor, ai_only=False, retry_failed=True):
     from datetime import timedelta
 
     from triagedesk.authentication import verify_maintainer
@@ -502,26 +347,24 @@ def schedule_workspace_job(repository_id, tasks, db, actor, ai_only=False):
             return job_output(active)
         return {"status": "busy"}
     if ai_only:
-        if not settings().groq_api_key.get_secret_value():
-            raise HTTPException(503, "The backend has not loaded a Groq API key")
+        if not settings().openai_api_key.get_secret_value():
+            raise HTTPException(503, "The backend has not loaded an OpenAI API key")
         cooldown = provider_cooldown(db)
         if cooldown:
             raise HTTPException(
                 429, f"AI is waiting for provider backoff until {aware(cooldown.retry_after).isoformat()}"
             )
-    latest = db.scalar(
-        select(ConnectionJob.created_at)
-        .where(ConnectionJob.repository_id == repository_id)
-        .order_by(ConnectionJob.created_at.desc())
-        .limit(1)
-    )
+    latest_query = select(ConnectionJob.created_at).where(ConnectionJob.repository_id == repository_id)
+    if not ai_only:
+        latest_query = latest_query.where(ConnectionJob.result["ai_only"].as_boolean().is_not(True))
+    latest = db.scalar(latest_query.order_by(ConnectionJob.created_at.desc()).limit(1))
     interval = 10 if ai_only else settings().auto_sync_seconds
     if latest and aware(latest) + timedelta(seconds=interval) > utcnow():
         return {"status": "idle"}
     metadata, role = verify_maintainer(actor, repo.full_name)
     job, created = start_job(db, actor, repo.full_name, metadata, role, 3000, True)
     if created:
-        if ai_only:
+        if ai_only and retry_failed:
             retry_correctable_failures(db, repo)
         tasks.add_task(run_job, job.id, ai_only=ai_only)
     return job_output(job)

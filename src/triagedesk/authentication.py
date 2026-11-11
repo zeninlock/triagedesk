@@ -18,6 +18,7 @@ from sqlalchemy import delete, func, select, update
 
 from triagedesk.config import settings
 from triagedesk.github import aware, valid_repository
+from triagedesk.maintenance import prune_transient_records
 from triagedesk.models import AuthSession, DeviceLogin, Repository, RepositoryAccess, utcnow
 
 
@@ -97,7 +98,7 @@ def create_session(db, github_token, expires_in=None):
         ttl = min(ttl, max(1, int(expires_in) - 30))
     session_token = secrets.token_urlsafe(48)
     expires = utcnow() + timedelta(seconds=ttl)
-    db.execute(delete(AuthSession).where(AuthSession.expires_at < utcnow()))
+    prune_transient_records(db)
     session = AuthSession(
         token_hash=fingerprint(session_token),
         github_user_id=user["id"],
@@ -165,8 +166,6 @@ def verify_maintainer(principal, name):
 
 
 def require_connection(db, principal, repository_id):
-    if settings().auth_mode != "github":
-        return
     if repository_id is None:
         raise HTTPException(422, "Choose one of your connected repositories")
     grant = db.scalar(

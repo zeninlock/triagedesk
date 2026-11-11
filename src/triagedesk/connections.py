@@ -1,6 +1,6 @@
 """Bounded, observable repository imports for verified maintainers.
 
-One import/index job runs per installation. PostgreSQL's unique active_key enforces
+One import/analysis job runs per installation. PostgreSQL's unique active_key enforces
 that across request threads. A renewable lease releases interrupted jobs for retry;
 GitHub page checkpoints preserve completed work. This is a small single-API-instance
 runner, not a distributed queue or an automatic synchronization scheduler.
@@ -19,11 +19,9 @@ from sqlalchemy.orm import Session
 from triagedesk import db as database
 from triagedesk.ai_labels import analyze_repository
 from triagedesk.authentication import Principal, decrypt, verify_maintainer
-from triagedesk.auto_categories import categorize
 from triagedesk.github import GitHubClient, GitHubError, aware, ingest
 from triagedesk.issue_lifecycle import purge_closed
 from triagedesk.models import AuthSession, ConnectionJob, Repository, RepositoryAccess, utcnow
-from triagedesk.retrieval import build_index
 
 LEASE_SECONDS = 180
 
@@ -168,20 +166,15 @@ def run_job(job_id, ai_only=False):
             job = db.get(ConnectionJob, job_id)
             repository = db.get(Repository, job.repository_id)
             removed = purge_closed(db, repository.id)
-            categories = categorize(db, repository)
         touch(job_id, "Assigning AI labels", {"closed_removed": removed})
         ai_result = analyze_repository(
             database.engine(), repository.id, progress=lambda: touch(job_id, "Assigning AI labels")
         )
         touch(job_id, "Saving AI labels", {"ai_labels": ai_result})
-        touch(job_id, "Building related-report search", {"categorization": categories})
-        with Session(database.engine(), expire_on_commit=False) as db:
-            index = build_index(db)
         with Session(database.engine()) as db:
             job = db.get(ConnectionJob, job_id)
             if job.active_key != "import" or job.status == "failed":
                 return
-            job.result = {**job.result, "retrieval": index}
             job.status, job.stage, job.active_key = "complete", "Ready to review", None
             job.updated_at = utcnow()
             db.commit()

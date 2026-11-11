@@ -1,18 +1,48 @@
 """Tab-based workspace. Data, inference, and authorization remain in FastAPI."""
 
 from datetime import datetime, timezone
+from html import escape
 
 import pandas as pd
 import streamlit as st
 from account import connections_page
 
-GROUP_TITLES = {
-    "type": "Type",
-    "priority": "Priority",
-    "scope": "Module",
-    "contributor": "Contributor",
-    "workflow": "Workflow",
+GROUP_TITLES = {"type": "Type", "priority": "Priority", "area": "Area", "contributor": "Contributor"}
+WORK_STATUSES = ["open", "in progress", "blocked"]
+COLORS = {
+    "open": ("#dbeafe", "#1e40af"),
+    "in progress": ("#fef3c7", "#92400e"),
+    "blocked": ("#fee2e2", "#991b1b"),
+    "type: bug": ("#fee2e2", "#991b1b"),
+    "type: feature or enhancement": ("#dcfce7", "#166534"),
+    "type: docs": ("#dbeafe", "#1e40af"),
+    "type: chore or refactor": ("#e2e8f0", "#334155"),
+    "type: question": ("#f3e8ff", "#6b21a8"),
+    "priority: high": ("#ffe4e6", "#9f1239"),
+    "priority: medium": ("#ffedd5", "#9a3412"),
+    "priority: low": ("#e2e8f0", "#334155"),
+    "area: frontend": ("#e0e7ff", "#3730a3"),
+    "area: backend": ("#ccfbf1", "#115e59"),
+    "area: api": ("#cffafe", "#155e75"),
+    "help wanted": ("#fce7f3", "#9d174d"),
+    "good first issue": ("#ede9fe", "#5b21b6"),
 }
+
+
+def badge_html(value):
+    bg, fg = COLORS.get(value, ("#f1f5f9", "#334155"))
+    return f'<span style="display:inline-block;background:{bg};color:{fg};padding:4px 10px;margin:3px;border-radius:16px;font-size:13px;font-weight:600">{escape(value)}</span>'
+
+
+def show_badges(values):
+    st.markdown(" ".join(badge_html(value) for value in values), unsafe_allow_html=True)
+
+
+def cell_style(value):
+    bg, fg = COLORS.get(value, ("#ffffff", "#334155"))
+    return f"background-color: {bg}; color: {fg}; font-weight: 600"
+
+
 STATUS_TITLES = {
     "auto_sorted": "Auto-sorted",
     "needs_review": "Needs review",
@@ -67,6 +97,18 @@ def watch_workspace(repository_id, api, displayed_info):
                     st.rerun()
             st.caption("Checks for new and closed issues automatically while this workspace is open.")
         pending = current["counts"].get("pending", 0)
+        if (
+            pending
+            and job.get("status") not in {"queued", "running", "busy"}
+            and activity.get("can_retry")
+            and not activity.get("error")
+        ):
+            ai_job = api(
+                f"/triage/{repository_id}/analyze", "POST", params={"retry_failed": "false"}, quiet=True
+            )
+            if ai_job and ai_job.get("id"):
+                job = ai_job
+                st.session_state[f"active_job_{repository_id}"] = job["id"]
         if pending:
             states = activity.get("states", {})
             error = activity.get("error")
@@ -91,7 +133,7 @@ def watch_workspace(repository_id, api, displayed_info):
                     else:
                         st.info("A recent pass is still within the retry interval. Try again shortly.")
             st.caption(
-                "Run AI now analyzes pending issues directly, without importing GitHub issues or rebuilding search. Provider backoff still applies."
+                "Run AI now analyzes pending issues directly, without re-importing GitHub issues. Provider backoff still applies."
             )
 
     progress()
@@ -105,7 +147,12 @@ def overview(info):
     st.caption(
         f"{info['total']} open imported issues · {'Partial collection' if info['partial'] else 'Complete collection'}"
     )
-    st.subheader("How AI labeled the current issues")
+    cols = st.columns(3)
+    for col, status in zip(cols, WORK_STATUSES):
+        with col:
+            show_badges([status])
+            st.metric("Issues", info.get("work_statuses", {}).get(status, 0))
+    st.subheader("Current issue labels")
     tabs = st.tabs(list(GROUP_TITLES.values()), key="chart_group", on_change="rerun")
     for tab, group in zip(tabs, GROUP_TITLES):
         if tab.open:
@@ -116,18 +163,21 @@ def overview(info):
                 else:
                     st.info("No AI labels in this group yet.")
     st.caption(
-        "AI suggestions for current open issues, including uncertain suggestions. Human overrides are shown on the issue itself."
+        "Current labels include saved human corrections. Uncertain AI suggestions remain clearly marked for review."
     )
 
 
 def issue_table(repository_id, api, key, status="all", group=None, label=None):
+    work_status = st.selectbox("Work status", ["All", *WORK_STATUSES], key=f"work_filter_{key}")
     search = st.text_input("Search issues", max_chars=200, key=f"search_{key}")
     page = st.number_input("Page", min_value=1, step=1, key=f"page_{key}")
-    context = (key, search, int(page))
+    context = (key, search, int(page), work_status)
     if st.session_state.get("detail_context") != context:
         st.session_state.pop("selected_issue", None)
         st.session_state["detail_context"] = context
     params = {"status": status, "search": search, "page": int(page), "page_size": 20}
+    if work_status != "All":
+        params["work_status"] = work_status
     if group and label:
         params.update(group=group, label=label)
     data = api(f"/triage/{repository_id}/issues", params=params)
@@ -141,9 +191,17 @@ def issue_table(repository_id, api, key, status="all", group=None, label=None):
         {
             "#": item["number"],
             "Issue": item["title"],
-            "Labels": " · ".join(x["name"] for x in item["labels"])
-            or ("Choose labels in review" if item["status"] == "needs_review" else "Waiting for analysis"),
-            "Status": (
+            **{
+                title: next((x["name"] for x in item["labels"] if x.get("group") == group), "—")
+                for group, title in GROUP_TITLES.items()
+                if group != "contributor"
+            },
+            "Help wanted": "help wanted" if any(x["name"] == "help wanted" for x in item["labels"]) else "—",
+            "Good first issue": "good first issue"
+            if any(x["name"] == "good first issue" for x in item["labels"])
+            else "—",
+            "Work status": item.get("work_status", "open"),
+            "AI triage": (
                 "AI needs attention"
                 if item["status"] == "pending" and item.get("analysis_failure")
                 else "Analyzing"
@@ -164,7 +222,9 @@ def issue_table(repository_id, api, key, status="all", group=None, label=None):
             st.session_state["selected_issue"] = data["items"][selection[0]]["id"]
 
     st.dataframe(
-        pd.DataFrame(rows),
+        pd.DataFrame(rows).style.map(
+            cell_style, subset=["Type", "Priority", "Area", "Help wanted", "Good first issue", "Work status"]
+        ),
         hide_index=True,
         width="stretch",
         key=f"table_{key}",
@@ -211,17 +271,28 @@ def issue_details(repository_id, api, key_for, can_write):
     st.divider()
     st.subheader(f"#{issue['number']} · {issue['title']}")
     st.link_button("View on GitHub", issue["source_url"])
+    show_badges([issue.get("work_status", "open"), *(x["name"] for x in issue["labels"])])
+    with st.form(f"status_{selected}_{issue.get('work_revision', 0)}"):
+        work_status = st.selectbox(
+            "Issue work status", WORK_STATUSES, index=WORK_STATUSES.index(issue.get("work_status", "open"))
+        )
+        save_status = st.form_submit_button("Save work status", disabled=not can_write)
+    if save_status:
+        payload = {"status": work_status, "expected_revision": issue.get("work_revision", 0)}
+        payload["idempotency_key"] = key_for({"issue_id": selected, "change": "status", **payload})
+        if api(f"/triage/issues/{selected}/status", "PUT", payload):
+            st.toast("Work status saved")
+            st.rerun()
     left, right = st.columns([1.4, 1])
     with left:
         st.text(issue["body"] or "No description provided.")
         st.caption("GitHub source labels: " + (", ".join(issue["source_labels"]) or "None"))
-        with st.expander("Related issues"):
-            related = api(f"/issues/{selected}/related", quiet=True)
-            if related:
-                for candidate in related.get("items", []):
-                    st.link_button(f"#{candidate['number']} · {candidate['title']}", candidate["source_url"])
-                if not related.get("items"):
-                    st.caption("No related reports currently available.")
+        with st.expander("Status history"):
+            for event in issue.get("activity", []):
+                st.write(f"{event['from_status']} → {event['to_status']}")
+                st.caption(f"{event['actor']} · {event['created_at']}")
+            if not issue.get("activity"):
+                st.caption("No work status changes yet.")
         with st.expander("Review history"):
             for row in issue["history"]:
                 st.write(" · ".join(x["name"] for x in row["labels"]))
@@ -232,7 +303,8 @@ def issue_details(repository_id, api, key_for, can_write):
                 st.caption("No human reviews yet.")
     with right:
         st.write("**" + STATUS_TITLES[issue["status"]] + "**")
-        st.write(" · ".join(x["name"] for x in issue["labels"]) or "Labels pending")
+        if not issue["labels"]:
+            st.caption("Labels pending")
         analysis = issue.get("analysis")
         if analysis and analysis["status"] == "complete":
             st.text(analysis["summary"])
@@ -240,10 +312,9 @@ def issue_details(repository_id, api, key_for, can_write):
             st.caption(
                 f"AI confidence: {analysis['confidence']:.0%}. Model-reported score, not a calibrated probability."
             )
-            with st.expander("Label evidence"):
+            with st.expander("Labels and confidence"):
                 for label in analysis["labels"]:
                     st.write(f"{label['name']} · {label['confidence']:.0%}")
-                    st.text(label["evidence"])
         elif issue["status"] == "pending" and issue.get("analysis_failure"):
             failure = issue["analysis_failure"]
             st.warning(failure["message"] + " " + failure["action"])
@@ -265,15 +336,23 @@ def issue_details(repository_id, api, key_for, can_write):
                         for x in issue["labels"]
                         if x["group"] == group and x["name"] in issue["taxonomy"][group]
                     ]
-                    if group == "type":
-                        options = issue["taxonomy"][group]
+                    if group in {"type", "priority", "area"}:
+                        options = (["Not inferred"] if group == "area" else []) + issue["taxonomy"][group]
                         selected_type = st.selectbox(
                             title,
                             options,
-                            index=options.index(defaults[0]) if defaults else None,
-                            placeholder="Choose one type",
+                            index=options.index(defaults[0])
+                            if defaults
+                            else options.index("priority: low")
+                            if group == "priority"
+                            else 0
+                            if group == "area"
+                            else None,
+                            placeholder="Not inferred" if group == "area" else f"Choose one {title.lower()}",
                         )
-                        values[group] = [selected_type] if selected_type else []
+                        values[group] = (
+                            [selected_type] if selected_type and selected_type != "Not inferred" else []
+                        )
                     else:
                         values[group] = st.multiselect(title, issue["taxonomy"][group], default=defaults)
                 note = st.text_area("Review note", max_chars=2000)
@@ -281,8 +360,8 @@ def issue_details(repository_id, api, key_for, can_write):
                     "Save reviewed labels", type="primary", disabled=not can_write
                 )
             if submitted:
-                if not values["type"]:
-                    st.warning("Choose one primary type.")
+                if not values["type"] or not values["priority"]:
+                    st.warning("Choose one type and one priority.")
                 else:
                     payload = {
                         "labels": [
@@ -301,37 +380,21 @@ def issue_details(repository_id, api, key_for, can_write):
 
 
 def label_settings(repository_id, info, api, can_write):
-    st.subheader("Your repository's label groups")
-    st.caption(
-        "One label per line. Type requires at least one label. AI uses these exact names on its next update."
+    st.subheader("Label guide")
+    st.write(
+        "AI assigns one type and one priority. It chooses an area when the issue gives enough context, and contributor tags when suitable. You can correct labels in any issue."
     )
-    with st.form(f"taxonomy_{repository_id}"):
-        values = {
-            group: st.text_area(
-                title,
-                "\n".join(info["taxonomy"][group]),
-                max_chars=2000,
-                key=f"taxonomy_{repository_id}_{group}",
-            )
-            for group, title in GROUP_TITLES.items()
-        }
-        submitted = st.form_submit_button("Save label settings", disabled=not can_write)
-    if submitted:
-        payload = {
-            group: [x.strip() for x in text.splitlines() if x.strip()] for group, text in values.items()
-        }
-        if api(f"/triage/{repository_id}/taxonomy", "PUT", payload):
-            st.success(
-                "Label settings saved. New analysis will use these groups; previous decisions remain in history."
-            )
+    for group, title in GROUP_TITLES.items():
+        st.write(f"**{title}**")
+        show_badges(info["taxonomy"][group])
+    st.write("**Work status · changed by you**")
+    show_badges(WORK_STATUSES)
     st.caption(
-        f"Auto-sort cutoff: {info['threshold']:.0%}. Model: {info['model']}. Scores express model confidence, not measured accuracy."
+        "Priority reflects inferred impact and urgency. When neither can be inferred, it defaults to low. Good first issue is reserved for clearly bounded, low-risk work."
     )
-    with st.expander("Recorded model evidence"):
-        data = api("/models")
-        if data:
-            st.caption("Historical classifier evaluation is separate from this new multi-label LLM workflow.")
-            st.json(data)
+    st.caption(
+        f"Model: {info['model']} · Auto-sort cutoff: {info['threshold']:.0%}. Confidence is model-reported, not measured accuracy."
+    )
 
 
 def render_workspace(meta, account, repositories, api, key_for):
@@ -349,8 +412,6 @@ def render_workspace(meta, account, repositories, api, key_for):
             "Repository", list(names) or ["Connect a repository first"], disabled=not names
         )
         repository_id = names.get(repo_name)
-        if not github and meta.get("writes_enabled"):
-            st.text_input("Reviewer access token", type="password", key="reviewer_access")
         st.caption("GitHub stays unchanged. Labels and decisions are saved in TriageDesk.")
     if st.session_state.get("selected_repository") != repository_id:
         st.session_state.pop("selected_issue", None)
@@ -359,14 +420,12 @@ def render_workspace(meta, account, repositories, api, key_for):
         st.session_state.get("github_session") if github else st.session_state.get("reviewer_access")
     )
     st.title("TriageDesk")
-    if meta.get("mode") == "fixture":
-        st.info("Synthetic local demo. Issue text and demonstration scores are illustrative.")
     st.caption("Your open issues. Automatically organized.")
     if st.session_state.pop("review_saved", False):
         st.success("Review saved. The issue has moved to the Reviewed tab.")
     if st.session_state.get("workspace_notice"):
         st.warning(st.session_state.pop("workspace_notice"))
-    pages = ["Overview", "Issues", "Needs review", "Reviewed", "Connect repository", "Label settings"]
+    pages = ["Overview", "Issues", "Needs review", "Reviewed", "Connect repository", "Label guide"]
     tabs = st.tabs(
         pages,
         default="Overview" if repositories else "Connect repository",
@@ -376,7 +435,7 @@ def render_workspace(meta, account, repositories, api, key_for):
     info = api(f"/triage/{repository_id}/summary") if repository_id else None
     if info and not info["ai_configured"]:
         st.info(
-            "Automatic AI labeling needs the installation's Groq API key. Your issues remain visible while analysis is pending."
+            "Automatic AI labeling needs the installation's OpenAI API key. Your issues remain visible while analysis is pending."
         )
     if repository_id and github and can_write and info:
         watch_workspace(repository_id, api, info)
@@ -390,7 +449,7 @@ def render_workspace(meta, account, repositories, api, key_for):
                 st.info("Connect a public repository to start organizing its issues.")
             elif page == "Overview":
                 overview(info)
-            elif page == "Label settings":
+            elif page == "Label guide":
                 label_settings(repository_id, info, api, can_write)
             else:
                 st.subheader(page)

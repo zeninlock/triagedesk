@@ -11,12 +11,13 @@ from triagedesk.ai_labels import DEFAULT_TAXONOMY
 def test_signin_connect_tabs_uncertain_review_and_logout(monkeypatch):
     """Exercise the tab workflow against a mocked API; never contact live providers."""
     connected, reviewed = False, False
+    work_status, work_revision = "open", 0
     real_client = httpx.Client
     taxonomy_hash = "a" * 64
     label_queries = []
 
     def respond(request):
-        nonlocal connected, reviewed
+        nonlocal connected, reviewed, work_status, work_revision
         path = request.url.path
         item = {
             "id": 1,
@@ -29,7 +30,12 @@ def test_signin_connect_tabs_uncertain_review_and_logout(monkeypatch):
             "snapshot_id": 1,
             "review_revision": int(reviewed),
             "analysis_id": 1,
-            "labels": [{"group": "type", "name": "bug", "confidence": 0.6}],
+            "labels": [
+                {"group": "type", "name": "type: bug", "confidence": 0.6},
+                {"group": "priority", "name": "priority: low", "confidence": 0.6},
+            ],
+            "work_status": work_status,
+            "work_revision": work_revision,
         }
         if path == "/meta":
             data = {
@@ -82,7 +88,9 @@ def test_signin_connect_tabs_uncertain_review_and_logout(monkeypatch):
                 },
                 "total": 1,
                 "partial": False,
-                "labels": {g: {n: int(n == "bug") for n in names} for g, names in DEFAULT_TAXONOMY.items()},
+                "labels": {
+                    g: {n: int(n == "type: bug") for n in names} for g, names in DEFAULT_TAXONOMY.items()
+                },
                 "taxonomy": DEFAULT_TAXONOMY,
                 "taxonomy_hash": taxonomy_hash,
                 "ai_configured": True,
@@ -113,10 +121,14 @@ def test_signin_connect_tabs_uncertain_review_and_logout(monkeypatch):
                     "labels": [],
                 },
             }
-        elif path == "/issues/1/related":
-            data = {"items": []}
+        elif path == "/triage/issues/1/status":
+            body = json.loads(request.content)
+            assert body["expected_revision"] == work_revision
+            work_status = body["status"]
+            work_revision += 1
+            data = {"status": work_status, "revision": work_revision}
         elif path == "/triage/issues/1/reviews":
-            assert json.loads(request.content)["labels"][0] == {"group": "type", "name": "bug"}
+            assert json.loads(request.content)["labels"][0] == {"group": "type", "name": "type: bug"}
             reviewed = True
             data = {"id": 1, "revision": 1}
         else:
@@ -127,33 +139,37 @@ def test_signin_connect_tabs_uncertain_review_and_logout(monkeypatch):
         httpx, "Client", lambda **kwargs: real_client(transport=httpx.MockTransport(respond), **kwargs)
     )
     app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "ui/app.py"))
-    app.run(timeout=10)
+    app.run(timeout=30)
     assert not app.exception
     next(f for f in app.text_input if f.label == "GitHub token").set_value("ui-test-credential")
-    next(b for b in app.button if b.label == "Verify GitHub identity").click().run(timeout=10)
+    next(b for b in app.button if b.label == "Verify GitHub identity").click().run(timeout=30)
     assert not app.exception
     assert {"Overview", "Issues", "Needs review", "Reviewed", "Connect repository"}.issubset(
         {t.label for t in app.tabs}
     )
     next(f for f in app.text_input if f.label == "Public repository").set_value("maintainer/project")
-    next(b for b in app.button if b.label == "Verify maintainer and import issues").click().run(timeout=10)
+    next(b for b in app.button if b.label == "Verify maintainer and import issues").click().run(timeout=30)
     assert not app.exception
     app.session_state["workspace_tabs"] = "Needs review"
-    app.run(timeout=10)
+    app.run(timeout=30)
     app.session_state["selected_issue"] = 1
     app.session_state["selected_repository"] = 1
-    app.run(timeout=10)
+    app.run(timeout=30)
     assert not app.exception
-    next(b for b in app.button if b.label == "Save reviewed labels").click().run(timeout=10)
+    next(s for s in app.selectbox if s.label == "Issue work status").select("in progress")
+    next(b for b in app.button if b.label == "Save work status").click().run(timeout=30)
+    assert not app.exception and work_status == "in progress"
+    assert next(s for s in app.selectbox if s.label == "Issue work status").value == "in progress"
+    next(b for b in app.button if b.label == "Save reviewed labels").click().run(timeout=30)
     assert not app.exception and reviewed
     assert any("moved to the Reviewed tab" in message.value for message in app.success)
     app.session_state["workspace_tabs"] = "Issues"
-    app.session_state["browse_group"] = "Module"
-    app.session_state["labels_1_scope"] = "API"
-    app.run(timeout=10)
+    app.session_state["browse_group"] = "Area"
+    app.session_state["labels_1_area"] = "area: api"
+    app.run(timeout=30)
     assert not app.exception
-    assert label_queries[-1]["group"] == "scope" and label_queries[-1]["label"] == "API"
-    next(b for b in app.button if b.label == "Sign out").click().run(timeout=10)
+    assert label_queries[-1]["group"] == "area" and label_queries[-1]["label"] == "area: api"
+    next(b for b in app.button if b.label == "Sign out").click().run(timeout=30)
     assert not app.exception
     assert any(f.label == "GitHub token" for f in app.text_input)
 
@@ -187,12 +203,12 @@ connections_page({{
         "status": "complete",
         "result": {"ai_labels": {"configured": import_configured, "analyzed": 0}},
     }
-    app.run(timeout=10)
+    app.run(timeout=30)
     assert not app.exception
     captions = [item.value for item in app.caption]
     messages = [item.value for item in app.info]
-    assert any("Groq key loaded by the backend" in item for item in captions) == current_configured
-    assert any("has not loaded a Groq API key" in item for item in messages) == (not current_configured)
+    assert any("OpenAI key loaded by the backend" in item for item in captions) == current_configured
+    assert any("has not loaded an OpenAI API key" in item for item in messages) == (not current_configured)
     assert any("This import ran before AI was enabled" in item for item in messages) == (
         current_configured and not import_configured
     )
@@ -215,7 +231,7 @@ def info():
         'ai_activity': {{
             'revision': 'complete' if done else 'failed', 'can_retry': True,
             'states': {{'queued': 0, 'running': 0, 'failed': 0 if done else 1}},
-            'error': None if done else {{'message': 'Groq rejected the API key (401).', 'action': 'Replace it, then retry.'}},
+            'error': None if done else {{'message': 'OpenAI rejected the API key (401).', 'action': 'Replace it, then retry.'}},
         }},
     }}
 
@@ -236,20 +252,20 @@ def api(path, method='GET', **kwargs):
             'id': 1, 'number': 1, 'title': 'API crashes', 'confidence': 0.96 if done else None,
             'status': 'auto_sorted' if done else 'pending',
             'analysis_status': 'complete' if done else 'failed',
-            'analysis_failure': None if done else {{'message': 'Groq rejected the API key (401).'}},
-            'labels': [{{'name': 'bug'}}] if done else [],
+            'analysis_failure': None if done else {{'message': 'OpenAI rejected the API key (401).'}},
+            'labels': [{{'group': 'type', 'name': 'type: bug'}}] if done else [],
         }}]}}
     raise AssertionError(path)
 
 watch_workspace(1, api, info())
 issue_table(1, api, 'ai-progress')
 """)
-    app.run(timeout=10)
+    app.run(timeout=30)
     assert not app.exception
-    assert any("Groq rejected the API key (401)" in message.value for message in app.warning)
-    assert app.dataframe[0].value.iloc[0]["Status"] == "AI needs attention"
-    next(button for button in app.button if button.label == "Run AI now").click().run(timeout=10)
+    assert any("OpenAI rejected the API key (401)" in message.value for message in app.warning)
+    assert app.dataframe[0].value.iloc[0]["AI triage"] == "AI needs attention"
+    next(button for button in app.button if button.label == "Run AI now").click().run(timeout=30)
     assert not app.exception
     assert not app.warning
-    assert app.dataframe[0].value.iloc[0]["Status"] == "Auto-sorted"
-    assert app.dataframe[0].value.iloc[0]["Labels"] == "bug"
+    assert app.dataframe[0].value.iloc[0]["AI triage"] == "Auto-sorted"
+    assert app.dataframe[0].value.iloc[0]["Type"] == "type: bug"

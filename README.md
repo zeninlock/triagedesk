@@ -1,178 +1,64 @@
 # TriageDesk
 
-TriageDesk helps GitHub maintainers organize their issue backlog. It imports open issues from a public repository, uses an LLM to suggest labels, and puts uncertain results in a review queue. Issues, AI analysis, and maintainer decisions are saved in PostgreSQL so completed work can be reused across sessions.
+A GitHub issue triage dashboard hosted on **Streamlit Community Cloud**, with **Neon PostgreSQL** for persistence and the **OpenAI Python SDK** for labeling. You can deploy, sign in, and demonstrate it entirely through your browser.
 
-The dashboard is built with Streamlit, with a FastAPI backend. AI labeling uses the Groq API.
+Start with [the complete deployment guide](docs/HOSTING.md), then follow [the interview demo walkthrough](docs/DEMO.md).
 
-## How it works
+## What it does
 
-1. Sign in with GitHub and connect a public repository you maintain.
-2. TriageDesk imports its open issues and analyzes them against the repository's label settings.
-3. Confident results are labeled automatically. Results below the confidence threshold, or marked uncertain by the model, go to **Needs review**.
-4. Review an issue, adjust its labels if needed, and save. It moves to **Reviewed**.
-5. While the workspace is open, TriageDesk checks for new and updated issues and continues processing pending analysis. Issues confirmed closed on GitHub are removed from the local workspace.
+Connect a public repository you maintain. OpenAI reads each issue's title and description and returns its type, inferred priority, primary area, contributor suitability, and a short explanation in one structured response. Confident decisions are auto-sorted; uncertain decisions appear in **Needs review**. You can correct any labels.
 
-Labels are organized into five groups:
-
-| Group | Example labels |
+| Group | Values |
 | --- | --- |
-| Type | `bug`, `enhancement`, `documentation`, `question` |
-| Priority | `priority: high`, `priority: medium`, `priority: low`, `regression` |
-| Module | `billing`, `onboarding`, `UI/UX`, `API` |
-| Contributor | `good first issue`, `help wanted`, `easy` |
-| Workflow | `waiting for op's response`, `dependencies`, `CI` |
+| Type — exactly one | `type: bug`, `type: feature or enhancement`, `type: docs`, `type: chore or refactor`, `type: question` |
+| Priority — exactly one | `priority: high`, `priority: medium`, `priority: low` |
+| Area — one when inferable | `area: frontend`, `area: backend`, `area: api` |
+| Contributor — optional | `help wanted`, `good first issue` |
+| Work status — set by the user | `open`, `in progress`, `blocked` |
 
-You can change the labels for each repository in **Label settings**. The **Issues** tab lets you browse by group and label, and **Overview** shows the label distribution. Issue details include the model's explanation, supporting text, and related issues.
+Priority reflects the meaning, impact, and urgency of the report. When urgency or impact cannot be inferred, it defaults to **low**. A clearly bounded, simple, low-risk task can receive **good first issue**, which also adds **help wanted**. Vague or short descriptions do not imply easy work.
 
-Labels and reviews stay inside TriageDesk; the app reads GitHub issues without changing them. Completed analyses are cached, so unchanged issues do not need another AI call on each login or refresh.
+Work status starts at **open**. Only a signed-in maintainer can change it. AI labeling, refreshing, and GitHub synchronization preserve it. The work status and AI review state are separate: a reviewed issue can still be blocked or in progress.
 
-## Project structure
+Color-coded cells and badges distinguish types, priorities, areas, work statuses, and contributor tags. Labels remain readable without relying on color alone.
 
-```text
-triagedesk/
-├── src/triagedesk/          # Backend and application logic
-│   ├── api.py              # FastAPI routes
-│   ├── authentication.py   # GitHub sign-in and application sessions
-│   ├── connections.py      # Repository connections and imports
-│   ├── github.py           # GitHub API client and issue synchronization
-│   ├── ai_labels.py        # Groq requests and label validation
-│   ├── triage.py           # Analysis jobs, caching, and review routing
-│   ├── models.py           # Database tables
-│   ├── retrieval.py        # Related-issue search
-│   ├── training.py         # Offline scikit-learn classifier training
-│   ├── config.py           # Application settings
-│   └── cli.py              # Command-line tools
-├── ui/
-│   ├── app.py              # Local Streamlit entrypoint
-│   ├── community_app.py    # Streamlit Community Cloud entrypoint
-│   ├── account.py          # Sign-in and repository connection screens
-│   └── workspace.py        # Issue browsing, labels, and review tabs
-├── alembic/                # Database migrations
-├── config/                 # Label mappings for the offline classifier
-├── tests/                  # Unit, API, and database tests
-├── scripts/                # Setup, startup, and maintenance scripts
-├── docs/                   # Setup guides and technical documentation
-├── evidence/               # Offline dataset and model reports
-├── .github/workflows/      # Continuous integration
-├── .streamlit/             # Streamlit configuration and secrets example
-├── .env.example            # Example local environment settings
-├── compose.yaml            # PostgreSQL, API, and UI services
-├── Dockerfile              # Application image
-├── pyproject.toml          # Python dependencies and tool settings
-└── uv.lock                 # Locked dependencies
-```
+## Deploy
 
-## Run locally
+1. Put this source at the root of a GitHub repository.
+2. Create a Neon project and copy its pooled and direct connection URLs.
+3. In Streamlit Community Cloud, deploy `ui/community_app.py` with **Python 3.12**.
+4. Paste the values from [the secrets template](.streamlit/secrets.toml.example) into **Advanced settings → Secrets**, replacing the placeholders with your Neon URLs, encryption secret, and OpenAI API key.
+5. Deploy. Database setup and upgrades run automatically in the cloud.
+6. Sign in with a fine-grained GitHub token and connect a public repository you own or maintain.
 
-You will need Git, Python 3.12, Docker with Docker Compose, and a Groq API key for automatic labeling.
+The [full guide](docs/HOSTING.md) covers every step, including how to generate the encryption secret in your browser, sign-in permissions, upgrading an existing database, and troubleshooting.
 
-### 1. Clone and configure
+## Efficiency and persistence
 
-```sh
-git clone https://github.com/zeninlock/triagedesk.git
-cd triagedesk
-python3 scripts/setup-github-local.py
-```
+- One bounded OpenAI Responses API call produces all labels for an uncached issue; no separate call per tag.
+- The default model is `gpt-4.1-mini`, with strict structured output, a 2,048-token output cap, and bounded issue input.
+- Completed analyses and human reviews are reused for the same issue snapshot and classifier version. Timestamp-only GitHub changes reuse the snapshot. Text or source-label changes can require new analysis.
+- Work status changes, browsing, and refreshing completed results do not call OpenAI. Model or classification-policy changes intentionally invalidate AI results; valid human decisions are retained.
+- Five pending issues are processed per pass by default. The workspace continues small AI passes while open. Provider backoff is respected; invalid credentials or billing problems pause a repository's queue until explicitly retried.
+- Neon retains issues, source snapshots, analyses, reviews, status changes, and repository access across app reboots. Confirmed closed GitHub issues and their dependent workspace records are removed on synchronization.
 
-The setup script creates a local `.env` file, enables GitHub sign-in, and generates an encryption key for stored credentials. Add your Groq API key to that file:
+The app reads GitHub and stores decisions in Neon. It does not change GitHub issue labels or statuses. Your OpenAI key belongs in Streamlit Secrets; each user's GitHub token belongs only in the sign-in form. GitHub credentials are encrypted before storage.
 
-```dotenv
-GROQ_API_KEY=your_groq_api_key
-```
+## Code map
 
-Keep `.env` private. It is excluded from Git.
-
-### 2. Start the application
-
-With Docker running:
-
-```sh
-docker compose up --build -d --wait
-```
-
-This starts PostgreSQL, applies database migrations, and launches the API and dashboard.
-
-- Dashboard: [http://localhost:8501](http://localhost:8501)
-- API documentation: [http://localhost:8000/docs](http://localhost:8000/docs)
-
-### 3. Connect a repository
-
-1. Create a fine-grained personal access token in GitHub for the repository you want to connect. Grant **Metadata: read** and **Issues: read** permissions.
-2. Use the token to sign in to TriageDesk.
-3. Open **Connect repository**, enter `owner/repository`, and choose **Verify maintainer and import issues**.
-4. Open the repository workspace to browse labels and review uncertain results.
-
-Your GitHub account must own the repository or have triage, write, maintain, or admin access. Browser sign-in through a GitHub App is also supported; its configuration is covered in the [hosting guide](docs/HOSTING.md).
-
-### Stop or inspect the application
-
-```sh
-docker compose logs -f api ui
-docker compose down
-```
-
-Stopping the services keeps the database and saved reviews. Start them again with `docker compose up -d --wait`. After changing `.env`, run `docker compose up -d --wait` to apply the new settings.
-
-## Try the demo
-
-For a fresh checkout, you can use sample issues without GitHub credentials or a Groq key:
-
-```sh
-cp .env.example .env
-docker compose up --build -d --wait
-```
-
-Open the dashboard and enter `local-demo-change-me` in the reviewer token field to save reviews. This mode seeds synthetic issues for exploring the interface; it does not run automatic Groq analysis. Use the GitHub setup above to work with a real repository.
-
-## Configuration
-
-Settings are loaded from `.env`. The main options are:
-
-| Setting | Purpose |
+| Location | Purpose |
 | --- | --- |
-| `GROQ_API_KEY` | API key used for AI labeling |
-| `AI_MODEL` | Groq model used for analysis |
-| `AI_CONFIDENCE_THRESHOLD` | Minimum model-reported confidence for automatic labeling; default `0.85` |
-| `AI_BATCH_SIZE` | Issues processed in each analysis batch; default `5` |
-| `AI_REQUEST_INTERVAL` | Minimum interval between AI requests, in seconds; default `10` |
-| `AUTO_SYNC_SECONDS` | Interval between workspace sync checks; default `60` |
-| `DATABASE_URL` | PostgreSQL connection URL; Compose supplies its internal database address |
-| `AUTH_ENCRYPTION_KEY` | Secret generated by the setup script for encrypting stored credentials |
-| `GITHUB_CLIENT_ID` | Optional GitHub App client ID for browser sign-in |
+| `ui/community_app.py` | Cloud entrypoint; starts the private backend once for all visitors |
+| `ui/app.py`, `ui/workspace.py`, `ui/account.py` | Dashboard, color-coded issues, sign-in, and imports |
+| `src/triagedesk/ai_labels.py` | OpenAI schema, semantic classification policy, cache, claims, and backoff |
+| `src/triagedesk/triage.py` | SQL filtering, human label reviews, and conflict-safe work status changes |
+| `src/triagedesk/authentication.py` | GitHub identity and maintainer permissions |
+| `src/triagedesk/connections.py`, `github.py` | Import jobs and incremental issue synchronization |
+| `src/triagedesk/models.py`, `alembic/` | Neon schema and upgrade history |
+| `tests/` | Mocked-provider, API, UI, migration, and PostgreSQL concurrency checks |
 
-If issues remain **Waiting for AI**, check the Groq key and available quota. The dashboard shows analysis progress and provider errors. **Run AI now** processes pending analysis without importing the repository again.
+The UI and its private FastAPI process run together inside Streamlit's hosting environment. The backend listens on the hosting server's loopback interface; no separate backend hosting service or public API port is required. Use one Streamlit app instance per database.
 
-## Development
+For maintainers: CI installs the lockfile, checks formatting, verifies migrations on PostgreSQL, and runs the tests. No application needs to run on your computer. `ui/requirements.txt` pins the cloud dependencies from `uv.lock`; regenerate it when updating dependencies.
 
-Install dependencies with [uv](https://docs.astral.sh/uv/). After configuring `.env` with the setup script above, start PostgreSQL and run the API locally:
-
-```sh
-uv sync --frozen
-docker compose up -d db
-uv run alembic upgrade head
-uv run uvicorn triagedesk.api:app --host 127.0.0.1 --port 8000
-```
-
-In a second terminal:
-
-```sh
-uv run streamlit run ui/app.py
-```
-
-Run the tests and code checks with:
-
-```sh
-uv run pytest -q
-uv run ruff check src ui tests
-uv run ruff format --check src ui tests alembic
-```
-
-PostgreSQL integration tests also require `TEST_DATABASE_URL` pointing to a separate test database. The test suite skips those tests when it is unset.
-
-## Hosting
-
-See the [hosting guide](docs/HOSTING.md) to deploy the app with Streamlit Community Cloud and a PostgreSQL database, including GitHub authentication and app secrets.
-
-## License
-
-The project code is available under the [MIT License](LICENSE). Third-party data and model sources are listed in [attribution](docs/ATTRIBUTION.md).
+See [the database and cleanup notes](docs/DATABASE.md) for the tables retained, upgrade behavior, and retired code. License: [MIT](LICENSE).

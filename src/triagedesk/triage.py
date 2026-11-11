@@ -1,5 +1,7 @@
 """SQL-backed label browsing and idempotent human overrides."""
 
+from typing import Literal
+
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import and_, case, func, or_, select, update
@@ -9,6 +11,7 @@ from sqlalchemy.orm import aliased
 from triagedesk.ai_labels import (
     GROUPS,
     analyzer_key,
+    current_label_review,
     error_details,
     provider_cooldown,
     publish_labels,
@@ -16,7 +19,7 @@ from triagedesk.ai_labels import (
 )
 from triagedesk.config import settings
 from triagedesk.github import aware
-from triagedesk.models import Issue, LabelAnalysis, LabelAssignment, LabelReview, Review, utcnow
+from triagedesk.models import Issue, IssueActivity, LabelAnalysis, LabelAssignment, LabelReview, utcnow
 from triagedesk.text import digest
 
 
@@ -37,7 +40,7 @@ class LabelReviewInput(BaseModel):
 
 
 def scope(repository):
-    a, r, legacy = aliased(LabelAnalysis), aliased(LabelReview), aliased(Review)
+    a, r = aliased(LabelAnalysis), aliased(LabelReview)
     latest_a = (
         select(func.max(LabelAnalysis.id))
         .where(
@@ -51,18 +54,12 @@ def scope(repository):
         select(func.max(LabelReview.id))
         .where(
             LabelReview.snapshot_id == Issue.snapshot_id,
-            LabelReview.taxonomy_hash == digest(taxonomy_for(repository)),
+            current_label_review(taxonomy_for(repository)),
         )
         .correlate(Issue)
         .scalar_subquery()
     )
-    latest_legacy = (
-        select(func.max(Review.id))
-        .where(Review.snapshot_id == Issue.snapshot_id)
-        .correlate(Issue)
-        .scalar_subquery()
-    )
-    reviewed = or_(r.id.is_not(None), and_(legacy.id.is_not(None), legacy.action.in_(["accept", "correct"])))
+    reviewed = r.id.is_not(None)
     uncertain = or_(a.uncertain.is_(True), a.confidence < settings().ai_confidence_threshold)
     status = case(
         (reviewed, "reviewed"),
@@ -81,6 +78,8 @@ def scope(repository):
         Issue.updated_at,
         Issue.snapshot_id,
         Issue.review_revision,
+        Issue.work_status,
+        Issue.work_revision,
         a.id.label("analysis_id"),
         a.status.label("analysis_status"),
         a.confidence,
@@ -91,15 +90,12 @@ def scope(repository):
         a.retry_after.label("analysis_retry_after"),
         a.lease_until.label("analysis_lease_until"),
         r.id.label("label_review_id"),
-        legacy.category.label("legacy_category"),
-        legacy.action.label("legacy_action"),
         status.label("status"),
     )
     return (
         query.select_from(Issue)
         .outerjoin(a, a.id == latest_a)
         .outerjoin(r, r.id == latest_r)
-        .outerjoin(legacy, legacy.id == latest_legacy)
         .where(Issue.repository_id == repository.id, Issue.available.is_(True), Issue.state == "open")
     )
 
@@ -113,8 +109,6 @@ def labels_for_rows(db, rows):
         if assignment.snapshot_id != item["snapshot_id"]:
             continue
         origin = "human" if item["label_review_id"] else "ai"
-        if item["status"] == "reviewed" and not item["label_review_id"]:
-            continue
         if (
             assignment.origin != origin
             or (origin == "ai" and assignment.analysis_id != item["analysis_id"])
@@ -134,18 +128,18 @@ def labels_for_rows(db, rows):
                 item["review_reason"] = "The classification is marked uncertain."
             else:
                 item["review_reason"] = "AI confidence is below the configured cutoff."
-        if item["status"] == "reviewed" and not item["label_review_id"] and item["legacy_category"]:
-            item["labels"] = [{"group": "type", "name": item["legacy_category"], "confidence": None}]
     return list(items.values())
 
 
 def list_labeled_issues(
-    db, repository, status="all", group=None, label=None, search="", page=1, page_size=20
+    db, repository, status="all", group=None, label=None, search="", page=1, page_size=20, work_status=None
 ):
     q = scope(repository).subquery()
     conditions = []
     if status != "all":
         conditions.append(q.c.status == status)
+    if work_status:
+        conditions.append(q.c.work_status == work_status)
     if search:
         conditions.append(q.c.title.icontains(search, autoescape=True))
     if label:
@@ -172,11 +166,6 @@ def list_labeled_issues(
             .correlate(q)
             .exists()
         )
-        if group == "type":
-            match = or_(
-                match,
-                and_(q.c.status == "reviewed", q.c.label_review_id.is_(None), q.c.legacy_category == label),
-            )
         conditions.append(match)
     query = select(q).where(*conditions)
     total = db.scalar(select(func.count()).select_from(query.subquery()))
@@ -215,7 +204,7 @@ def analysis_activity(db, repository, counts):
         "states": states,
         "error": error,
         "retry_after": retry_after,
-        "can_retry": bool(settings().groq_api_key.get_secret_value()) and cooldown is None,
+        "can_retry": bool(settings().openai_api_key.get_secret_value()) and cooldown is None,
         "revision": digest([counts, states, latest, error, retry_after]),
     }
 
@@ -225,15 +214,25 @@ def summary(db, repository):
     counts = {name: 0 for name in ["auto_sorted", "needs_review", "reviewed", "pending"]}
     counts.update(dict(db.execute(select(q.c.status, func.count()).group_by(q.c.status)).all()))
     labels = {group: {name: 0 for name in names} for group, names in taxonomy_for(repository).items()}
-    # Show the LLM's own current-snapshot distribution, separately from human overrides.
+    # Count effective assignments: human overrides take precedence over AI.
     rows = db.execute(
         select(LabelAssignment.group, LabelAssignment.name, func.count())
         .join(q, q.c.id == LabelAssignment.issue_id)
         .where(
-            LabelAssignment.origin == "ai",
             LabelAssignment.snapshot_id == q.c.snapshot_id,
-            LabelAssignment.analysis_id == q.c.analysis_id,
-            q.c.analysis_status == "complete",
+            or_(
+                and_(
+                    q.c.label_review_id.is_not(None),
+                    LabelAssignment.origin == "human",
+                    LabelAssignment.review_id == q.c.label_review_id,
+                ),
+                and_(
+                    q.c.label_review_id.is_(None),
+                    LabelAssignment.origin == "ai",
+                    LabelAssignment.analysis_id == q.c.analysis_id,
+                    q.c.analysis_status == "complete",
+                ),
+            ),
         )
         .group_by(LabelAssignment.group, LabelAssignment.name)
     )
@@ -242,13 +241,16 @@ def summary(db, repository):
             labels[group][name] = count
     return {
         "counts": counts,
+        "work_statuses": dict(
+            db.execute(select(q.c.work_status, func.count()).group_by(q.c.work_status)).all()
+        ),
         "ai_activity": analysis_activity(db, repository, counts),
         "total": sum(counts.values()),
         "labels": labels,
         "taxonomy": taxonomy_for(repository),
         "taxonomy_hash": digest(taxonomy_for(repository)),
         "groups": GROUPS,
-        "ai_configured": bool(settings().groq_api_key.get_secret_value()),
+        "ai_configured": bool(settings().openai_api_key.get_secret_value()),
         "threshold": settings().ai_confidence_threshold,
         "model": settings().ai_model,
         "last_synced_at": repository.last_synced_at,
@@ -271,9 +273,14 @@ def save_label_review(db, issue, repository, payload, reviewer):
         raise HTTPException(422, "Choose labels from this repository's current taxonomy")
     if (
         len({(x["group"], x["name"]) for x in labels}) != len(labels)
-        or sum(x["group"] == "type" for x in labels) != 1
+        or any(sum(x["group"] == group for x in labels) != 1 for group in ("type", "priority"))
+        or sum(x["group"] == "area" for x in labels) > 1
     ):
-        raise HTTPException(422, "Choose one primary type and avoid duplicate labels")
+        raise HTTPException(422, "Choose one type, one priority, at most one area, and avoid duplicates")
+    if any(x["name"] == "good first issue" for x in labels) and not any(
+        x["name"] == "help wanted" for x in labels
+    ):
+        labels.append({"group": "contributor", "name": "help wanted"})
     changed = db.execute(
         update(Issue)
         .where(
@@ -291,6 +298,10 @@ def save_label_review(db, issue, repository, payload, reviewer):
         if prior and prior.payload_hash == fingerprint:
             return prior
         raise HTTPException(409, "The issue or review changed; refresh before saving")
+    db.refresh(repository)
+    if payload.taxonomy_hash != digest(taxonomy_for(repository)):
+        db.rollback()
+        raise HTTPException(409, "The label settings changed; refresh before reviewing")
     analysis = db.scalar(
         select(LabelAnalysis).where(
             LabelAnalysis.snapshot_id == payload.snapshot_id,
@@ -321,4 +332,56 @@ def save_label_review(db, issue, repository, payload, reviewer):
         if prior and prior.payload_hash == fingerprint:
             return prior
         raise HTTPException(409, "Concurrent label review; refresh and inspect the saved decision") from None
+    return row
+
+
+class WorkStatusInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: Literal["open", "in progress", "blocked"]
+    expected_revision: int = Field(ge=0)
+    idempotency_key: str = Field(min_length=8, max_length=100)
+
+
+def save_work_status(db, issue, payload, actor):
+    fingerprint = digest([issue.id, payload.model_dump(), actor])
+    prior = db.scalar(select(IssueActivity).where(IssueActivity.idempotency_key == payload.idempotency_key))
+    if prior:
+        if prior.payload_hash != fingerprint:
+            raise HTTPException(409, "This submission key was used for a different change")
+        return prior
+    before = issue.work_status
+    changed = db.execute(
+        update(Issue)
+        .where(Issue.id == issue.id, Issue.work_revision == payload.expected_revision, Issue.state == "open")
+        .values(work_status=payload.status, work_revision=Issue.work_revision + 1)
+        .execution_options(synchronize_session=False)
+    )
+    if changed.rowcount != 1:
+        db.rollback()
+        prior = db.scalar(
+            select(IssueActivity).where(IssueActivity.idempotency_key == payload.idempotency_key)
+        )
+        if prior and prior.payload_hash == fingerprint:
+            return prior
+        raise HTTPException(409, "Someone updated this status; refresh before saving")
+    row = IssueActivity(
+        issue_id=issue.id,
+        from_status=before,
+        to_status=payload.status,
+        actor=actor,
+        revision=payload.expected_revision + 1,
+        idempotency_key=payload.idempotency_key,
+        payload_hash=fingerprint,
+    )
+    db.add(row)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        prior = db.scalar(
+            select(IssueActivity).where(IssueActivity.idempotency_key == payload.idempotency_key)
+        )
+        if prior and prior.payload_hash == fingerprint:
+            return prior
+        raise HTTPException(409, "Concurrent status update; refresh before saving") from None
     return row

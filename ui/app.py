@@ -26,9 +26,7 @@ BASE = os.getenv("API_URL", "http://localhost:8000").rstrip("/")
 
 def api(path, method="GET", payload=None, params=None, quiet=False):
     headers = {}
-    token = st.session_state.get("github_session", {}).get("access_token") or st.session_state.get(
-        "reviewer_access", ""
-    )
+    token = st.session_state.get("github_session", {}).get("access_token")
     if token:
         headers["Authorization"] = f"Bearer {token}"
     try:
@@ -48,7 +46,9 @@ def api(path, method="GET", payload=None, params=None, quiet=False):
             st.error(str(message))
     except httpx.HTTPError:
         if not quiet:
-            st.error("TriageDesk could not reach the API. Check that the services are running, then refresh.")
+            st.error(
+                "TriageDesk could not reach the API. Refresh the page; if this continues, reboot the app in Streamlit settings."
+            )
     return None
 
 

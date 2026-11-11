@@ -70,32 +70,23 @@ def sign_in(meta, api):
         st.error("The installation owner must configure a GitHub sign-in method before this app can be used.")
     st.caption(
         "GitHub credentials are encrypted in backend storage. Sessions expire and can be signed out. "
-        "TriageDesk reads public issues and records local reviews; it does not change your GitHub repository."
+        "TriageDesk reads public issues and saves your reviews in Neon; it does not change your GitHub repository."
     )
 
 
 def connections_page(meta, api):
     st.title("Connect a public repository")
-    st.write(
-        "Import real GitHub issues, prepare category suggestions, and build related-report search in one step."
-    )
-    if meta.get("auth_mode") != "github":
-        st.info(
-            "This is the local fixture demonstration. To connect actual repositories, use MODE=real, "
-            "AUTH_MODE=github, and a random AUTH_ENCRYPTION_KEY of at least 32 characters. "
-            "The README contains the local setup and online hosting instructions."
-        )
-        return
+    st.write("Import GitHub issues and assign types, priorities, areas, and contributor tags using OpenAI.")
     if not meta.get("writes_enabled"):
         st.info("The installation owner has disabled imports and review writes.")
         return
     if meta.get("ai_configured"):
         st.caption(
-            "Groq key loaded by the backend. Waiting issues will be analyzed while a workspace is open."
+            "OpenAI key loaded by the backend. Waiting issues will be analyzed while a workspace is open."
         )
     else:
         st.info(
-            "The backend has not loaded a Groq API key. The installation owner can add GROQ_API_KEY "
+            "The backend has not loaded an OpenAI API key. The installation owner can add OPENAI_API_KEY "
             "in Streamlit Secrets, save, then refresh the app."
         )
     with st.form("connect-repository"):

@@ -3,30 +3,25 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event, text
-from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from triagedesk import db
 from triagedesk.api import app
 from triagedesk.config import settings
-from triagedesk.fixtures import seed
 from triagedesk.models import Base
 
 
 @pytest.fixture(autouse=True)
 def config(tmp_path, monkeypatch):
-    monkeypatch.setenv("AUTH_MODE", "local")
-    monkeypatch.setenv("AUTH_ENCRYPTION_KEY", "")
+    monkeypatch.setenv("DATABASE_URL", "sqlite://")
+    monkeypatch.setenv("AUTH_MODE", "github")
+    monkeypatch.setenv("AUTH_ENCRYPTION_KEY", "test-encryption-secret-at-least-32-characters")
     monkeypatch.setenv("GITHUB_CLIENT_ID", "")
-    monkeypatch.setenv("MODE", "fixture")
+    monkeypatch.setenv("MODE", "real")
     monkeypatch.setenv("READ_ONLY", "false")
-    monkeypatch.setenv("REVIEWER_TOKEN", "test-review-secret")
-    monkeypatch.setenv("REVIEWER_NAME", "test-maintainer")
-    monkeypatch.setenv("ARTIFACT_DIR", str(tmp_path / "artifacts"))
     monkeypatch.setenv("GITHUB_TOKEN", "")
-    monkeypatch.setenv("GROQ_API_KEY", "")
+    monkeypatch.setenv("OPENAI_API_KEY", "")
     monkeypatch.setenv("AI_REQUEST_INTERVAL", "0")
     settings.cache_clear()
     yield
@@ -46,19 +41,6 @@ def database(monkeypatch):
     monkeypatch.setattr(db, "engine", lambda: database)
     yield database
     database.dispose()
-
-
-@pytest.fixture
-def client(database):
-    with Session(database) as session, session.begin():
-        seed(session)
-    with TestClient(app) as test_client:
-        yield test_client
-
-
-@pytest.fixture
-def auth_headers():
-    return {"Authorization": "Bearer test-review-secret"}
 
 
 @pytest.fixture

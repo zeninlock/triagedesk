@@ -1,5 +1,6 @@
-from alembic import context
 from sqlalchemy import create_engine
+
+from alembic import context
 from triagedesk.config import settings
 from triagedesk.models import Base
 
