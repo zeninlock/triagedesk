@@ -1,6 +1,6 @@
 # Database, upgrade, and cleanup notes
 
-The supported application store is Neon PostgreSQL. The source does not contain a populated Neon credential, so deployment supplies the actual database URLs through Streamlit Secrets. Migration `0004` applies automatically when the hosted app starts.
+The supported application store is Neon PostgreSQL. The source does not contain a populated Neon credential, so deployment supplies the actual database URLs through Streamlit Secrets. Migrations through `0005` apply automatically when the hosted app starts.
 
 ## Retained tables
 
@@ -18,6 +18,8 @@ The supported application store is Neon PostgreSQL. The source does not contain 
 | `label_reviews` | Human decisions and historical review notes |
 | `label_assignments` | Current, indexed labels for fast filtering and counts |
 | `issue_activity` | Actor and history for work status changes |
+| `repository_contexts` | Commit-pinned file indexes and bounded text cache for contributor guides |
+| `contributor_guides` | Guide requests, leases, excerpts, checked results, errors, and maintainer approval |
 | `alembic_version` | Applied schema revision |
 
 `label_assignments` and the historical JSON payloads serve different purposes: assignments make current filtering efficient; analysis/review payloads preserve the original decision. Neither is a second classifier.
@@ -40,6 +42,8 @@ Old AI analyses are retained as history. The changed classification policy uses 
 The original three migrations remain necessary for existing databases and for reproducible fresh installs. The data-consolidating upgrade has no destructive automatic downgrade. Restore the backup Neon branch and the prior application source together if you need to roll back.
 
 ## Ongoing housekeeping
+
+Migration `0005` adds the two guide tables while preserving issues, labels, reviews, and work statuses. Guide cache identity includes the issue snapshot, commit, sources, model, and guide version. Approval is separate from label review. Reusable repository contexts are pruned after thirty days; source excerpts saved in guides remain with the issue. Closed-issue cleanup also removes its guides.
 
 Expired sessions and device attempts are removed when users sign in. Completed/failed connection jobs older than seven days and import-run diagnostics older than thirty days are also pruned at sign-in. Active jobs and issue decisions are retained. On synchronization, confirmed closed GitHub issues and their dependent snapshots, labels, reviews, and status activity are removed from this open-issue workspace.
 

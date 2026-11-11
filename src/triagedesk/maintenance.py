@@ -4,7 +4,7 @@ from datetime import timedelta
 
 from sqlalchemy import delete
 
-from triagedesk.models import AuthSession, ConnectionJob, DeviceLogin, ImportRun, utcnow
+from triagedesk.models import AuthSession, ConnectionJob, DeviceLogin, ImportRun, RepositoryContext, utcnow
 
 
 def prune_transient_records(db):
@@ -19,6 +19,7 @@ def prune_transient_records(db):
             & (ConnectionJob.updated_at < now - timedelta(days=7)),
         ),
         (ImportRun, (ImportRun.completed_at < now - timedelta(days=30))),
+        (RepositoryContext, RepositoryContext.created_at < now - timedelta(days=30)),
     )
     for table, condition in conditions:
         db.execute(delete(table).where(condition).execution_options(synchronize_session=False))

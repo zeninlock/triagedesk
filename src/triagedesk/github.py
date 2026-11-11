@@ -56,7 +56,7 @@ class GitHubClient:
     def close(self):
         self.client.close()
 
-    def get(self, path, params=None, etag=None):
+    def get(self, path, params=None, etag=None, max_bytes=None):
         parsed = urlparse(path)
         if parsed.scheme and (parsed.scheme != "https" or parsed.netloc != "api.github.com"):
             raise GitHubError("Refused a non-GitHub pagination URL")
@@ -69,9 +69,36 @@ class GitHubClient:
                     )
                 self.sleep(delay)
             try:
-                response = self.client.get(
-                    path, params=params, headers={"If-None-Match": etag} if etag else {}
-                )
+                headers = {"If-None-Match": etag} if etag else {}
+                if max_bytes is None:
+                    response = self.client.get(path, params=params, headers=headers)
+                else:
+                    # Source reads never follow redirects or download unbounded blobs.
+                    with self.client.stream(
+                        "GET",
+                        path,
+                        params=params,
+                        headers=headers,
+                        follow_redirects=False,
+                        timeout=10,
+                    ) as streamed:
+                        chunks, size = [], 0
+                        for chunk in streamed.iter_bytes():
+                            size += len(chunk)
+                            if size > max_bytes:
+                                raise GitHubError("Repository response exceeded the source size limit")
+                            chunks.append(chunk)
+                        response = httpx.Response(
+                            streamed.status_code,
+                            # iter_bytes has already decompressed the payload.
+                            headers={
+                                k: v
+                                for k, v in streamed.headers.items()
+                                if k.lower() not in {"content-encoding", "content-length"}
+                            },
+                            content=b"".join(chunks),
+                            request=streamed.request,
+                        )
             except httpx.TransportError:
                 if attempt == self.max_retries:
                     raise GitHubError("GitHub connection failed after bounded retries") from None

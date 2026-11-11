@@ -231,6 +231,52 @@ class IssueActivity(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class RepositoryContext(Base):
+    __tablename__ = "repository_contexts"
+    __table_args__ = (UniqueConstraint("repository_id", "commit_sha", name="uq_context_repo_commit"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    repository_id: Mapped[int] = mapped_column(ForeignKey("repositories.id"), index=True)
+    commit_sha: Mapped[str] = mapped_column(String(40))
+    tree: Mapped[list] = mapped_column(JSON)
+    partial: Mapped[bool] = mapped_column(Boolean, default=False)
+    files: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ContributorGuide(Base):
+    __tablename__ = "contributor_guides"
+    __table_args__ = (
+        CheckConstraint("status IN ('queued','running','complete','failed')", name="ck_guide_status"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    issue_id: Mapped[int] = mapped_column(ForeignKey("issues.id"), index=True)
+    snapshot_id: Mapped[int] = mapped_column(ForeignKey("snapshots.id"), index=True)
+    repository_id: Mapped[int] = mapped_column(ForeignKey("repositories.id"), index=True)
+    session_id: Mapped[int | None] = mapped_column(ForeignKey("auth_sessions.id", ondelete="SET NULL"))
+    requested_by: Mapped[str] = mapped_column(String(100))
+    request_key: Mapped[str] = mapped_column(String(100), unique=True)
+    payload_hash: Mapped[str] = mapped_column(String(64))
+    version_key: Mapped[str] = mapped_column(String(64))
+    cache_key: Mapped[str | None] = mapped_column(String(64), index=True)
+    model: Mapped[str] = mapped_column(String(100))
+    commit_sha: Mapped[str | None] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(20), default="queued")
+    active_key: Mapped[str | None] = mapped_column(String(100), unique=True)
+    stage: Mapped[str] = mapped_column(String(100), default="Waiting to read repository")
+    sources: Mapped[list] = mapped_column(JSON, default=list)
+    result: Mapped[dict] = mapped_column(JSON, default=dict)
+    partial: Mapped[bool] = mapped_column(Boolean, default=False)
+    reused: Mapped[bool] = mapped_column(Boolean, default=False)
+    error: Mapped[str | None] = mapped_column(String(100))
+    retry_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lease_until: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approved_by: Mapped[str | None] = mapped_column(String(100))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    review_revision: Mapped[int] = mapped_column(Integer, default=0)
+
+
 @event.listens_for(Snapshot, "before_update")
 @event.listens_for(Snapshot, "before_delete")
 def immutable_snapshot(*_):

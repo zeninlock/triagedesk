@@ -121,6 +121,8 @@ def test_signin_connect_tabs_uncertain_review_and_logout(monkeypatch):
                     "labels": [],
                 },
             }
+        elif path == "/triage/issues/1/guide":
+            data = {"guide": None, "ai_configured": True}
         elif path == "/triage/issues/1/status":
             body = json.loads(request.content)
             assert body["expected_revision"] == work_revision

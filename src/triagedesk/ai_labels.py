@@ -10,13 +10,21 @@ from typing import Literal
 import httpx
 from openai import APIConnectionError, APIResponseValidationError, APIStatusError, OpenAI
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy import and_, delete, desc, func, or_, select, union_all, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
 from triagedesk.config import settings
 from triagedesk.github import aware
-from triagedesk.models import Issue, LabelAnalysis, LabelAssignment, LabelReview, Repository, utcnow
+from triagedesk.models import (
+    ContributorGuide,
+    Issue,
+    LabelAnalysis,
+    LabelAssignment,
+    LabelReview,
+    Repository,
+    utcnow,
+)
 from triagedesk.text import digest
 
 GROUPS = {"type": "Type", "priority": "Priority", "area": "Area", "contributor": "Contributor"}
@@ -152,17 +160,16 @@ def error_details(code):
 
 
 def provider_cooldown(db):
-    return db.execute(
-        select(LabelAnalysis.error, LabelAnalysis.retry_after)
-        .where(
-            LabelAnalysis.model == settings().ai_model,
-            LabelAnalysis.status == "failed",
-            LabelAnalysis.error.in_(GLOBAL_BACKOFF_ERRORS),
-            LabelAnalysis.retry_after > utcnow(),
+    queries = [
+        select(table.error, table.retry_after).where(
+            table.model == settings().ai_model,
+            table.status == "failed",
+            table.error.in_(GLOBAL_BACKOFF_ERRORS),
+            table.retry_after > utcnow(),
         )
-        .order_by(LabelAnalysis.retry_after.desc())
-        .limit(1)
-    ).first()
+        for table in (LabelAnalysis, ContributorGuide)
+    ]
+    return db.execute(union_all(*queries).order_by(desc("retry_after")).limit(1)).first()
 
 
 def retry_correctable_failures(db, repository):
@@ -344,12 +351,13 @@ class AIUnavailable(RuntimeError):
         self.retry_seconds = max(30, min(retry_seconds, 86400))
 
 
-def request_analysis(title, body, source_labels, taxonomy, client=None):
+def request_structured(
+    payload, schema, name, instructions, client=None, output_tokens=None, reasoning_effort=None
+):
+    """One bounded Responses request, shared by labels and contributor guides."""
     key = settings().openai_api_key.get_secret_value()
     if not key:
         raise AIUnavailable("not_configured")
-    text = {"title": title[:500], "body": body[:10000], "github_labels": source_labels[:20]}
-    schema = IssueClassification.model_json_schema()
     own = client is None
     client = client or httpx.Client(timeout=30, follow_redirects=False)
     # The queue owns retry timing; SDK retries would repeat calls inside a batch.
@@ -365,18 +373,26 @@ def request_analysis(title, body, source_labels, taxonomy, client=None):
             response = provider.responses.create(
                 model=settings().ai_model,
                 store=False,
-                **model_request_options(settings().ai_model),
+                **{
+                    **model_request_options(settings().ai_model),
+                    **({"max_output_tokens": output_tokens} if output_tokens else {}),
+                    **(
+                        {"reasoning": {"effort": reasoning_effort}}
+                        if reasoning_effort and "reasoning" in model_request_options(settings().ai_model)
+                        else {}
+                    ),
+                },
                 input=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "system", "content": instructions},
                     {
                         "role": "user",
-                        "content": json.dumps(text),
+                        "content": json.dumps(payload),
                     },
                 ],
                 text={
                     "format": {
                         "type": "json_schema",
-                        "name": "issue_labels",
+                        "name": name,
                         "strict": True,
                         "schema": schema,
                     }
@@ -434,16 +450,27 @@ def request_analysis(title, body, source_labels, taxonomy, client=None):
             parsed = json.loads(content)
         except ValueError:
             raise AIUnavailable("invalid_json") from None
-        try:
-            result = classification_result(IssueClassification.model_validate(parsed))
-        except ValidationError:
-            raise AIUnavailable("schema_invalid") from None
-        if len(body) > 10000 or len(title) > 500:
-            result.uncertain = True  # Do not auto-approve a report analyzed only in part.
-        return result
+        return parsed
     finally:
         if own:
             client.close()
+
+
+def request_analysis(title, body, source_labels, taxonomy, client=None):
+    parsed = request_structured(
+        {"title": title[:500], "body": body[:10000], "github_labels": source_labels[:20]},
+        IssueClassification.model_json_schema(),
+        "issue_labels",
+        SYSTEM_PROMPT,
+        client,
+    )
+    try:
+        result = classification_result(IssueClassification.model_validate(parsed))
+    except ValidationError:
+        raise AIUnavailable("schema_invalid") from None
+    if len(body) > 10000 or len(title) > 500:
+        result.uncertain = True
+    return result
 
 
 def publish_labels(db, issue, labels, origin, analysis_id=None, review_id=None):

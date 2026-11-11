@@ -62,7 +62,7 @@ def test_fresh_schema_matches_model_metadata(migration_database):
     engine, url = migration_database
     migrate(url, "head")
     with engine.connect() as db:
-        assert db.scalar(sa.text("SELECT version_num FROM alembic_version")) == "0004"
+        assert db.scalar(sa.text("SELECT version_num FROM alembic_version")) == "0005"
         assert compare_metadata(MigrationContext.configure(db), Base.metadata) == []
     assert not {"reviews", "predictions", "experiments", "similarity_judgments"} & set(
         sa.inspect(engine).get_table_names()
@@ -233,7 +233,49 @@ def test_cloud_bootstrap_migrates_and_serves_ready_backend(migration_database):
             result = json.load(response)
         assert result["status"] == "ready"
         with engine.connect() as db:
-            assert db.scalar(sa.text("SELECT version_num FROM alembic_version")) == "0004"
+            assert db.scalar(sa.text("SELECT version_num FROM alembic_version")) == "0005"
     finally:
         backend.stop()
     assert not backend.alive()
+
+
+def test_guide_upgrade_preserves_existing_issue_workflow(migration_database):
+    from conftest import raw_issue
+    from sqlalchemy.orm import Session
+
+    from triagedesk.github import upsert_issue
+    from triagedesk.models import Issue, Repository
+
+    engine, url = migration_database
+    migrate(url, "0004")
+    with Session(engine) as db:
+        repo = Repository(
+            github_id=77, full_name="maintainer/project", source_url="https://github.com/maintainer/project"
+        )
+        db.add(repo)
+        db.flush()
+        upsert_issue(db, repo, raw_issue())
+        db.flush()
+        issue = db.scalar(sa.select(Issue))
+        issue.work_status, issue.work_revision, issue.review_revision = "blocked", 3, 2
+        db.commit()
+        before = (
+            issue.id,
+            issue.snapshot_id,
+            issue.body,
+            issue.work_status,
+            issue.work_revision,
+            issue.review_revision,
+        )
+    migrate(url, "head")
+    with Session(engine) as db:
+        issue = db.get(Issue, before[0])
+        assert (
+            issue.id,
+            issue.snapshot_id,
+            issue.body,
+            issue.work_status,
+            issue.work_revision,
+            issue.review_revision,
+        ) == before
+        assert db.scalar(sa.text("SELECT COUNT(*) FROM contributor_guides")) == 0

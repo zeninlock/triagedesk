@@ -22,6 +22,10 @@ Work status starts at **open**. Only a signed-in maintainer can change it. AI la
 
 Color-coded cells and badges distinguish types, priorities, areas, work statuses, and contributor tags. Labels remain readable without relying on color alone.
 
+Select an issue and choose **Generate contributor guide** for a starting plan based on repository excerpts. Guides show relevant files, investigation steps, prerequisites, tests, completion checks, and missing information when supported. Items include checked quotes and links to a specific commit. Maintainers approve drafts separately from labels and work status. A checked source establishes that the quote exists; suggested actions still need human judgment.
+
+See [contributor guide setup, limitations, and demo steps](docs/CONTRIBUTOR_GUIDES.md). No new secret is required. Enable **Contents: Read-only** on the selected repository's GitHub token to read source files.
+
 ## Deploy
 
 1. Put this source at the root of a GitHub repository.
@@ -52,6 +56,8 @@ The app reads GitHub and stores decisions in Neon. It does not change GitHub iss
 | `ui/app.py`, `ui/workspace.py`, `ui/account.py` | Dashboard, color-coded issues, sign-in, and imports |
 | `src/triagedesk/ai_labels.py` | OpenAI schema, semantic classification policy, cache, claims, and backoff |
 | `src/triagedesk/triage.py` | SQL filtering, human label reviews, and conflict-safe work status changes |
+| `src/triagedesk/contributor_guides.py` | On-demand guides, evidence checks, caching, and maintainer approval |
+| `src/triagedesk/repository_context.py` | Bounded, commit-pinned source retrieval |
 | `src/triagedesk/authentication.py` | GitHub identity and maintainer permissions |
 | `src/triagedesk/connections.py`, `github.py` | Import jobs and incremental issue synchronization |
 | `src/triagedesk/models.py`, `alembic/` | Neon schema and upgrade history |

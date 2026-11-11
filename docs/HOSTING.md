@@ -14,7 +14,7 @@ For the easiest clean deployment, create a new GitHub repository, such as `triag
 
 The root must not be an extra enclosing `triagedesk-cloud-ready/` directory. Include hidden `.streamlit/config.toml` for the theme, and `.gitignore` if uploading using a tool that supports hidden files. In Finder, **Command+Shift+.** shows hidden files. The app works without the theme file if the uploader omits it.
 
-To update an existing repository, replace its source with this cleaned version and remove old files listed in `docs/DATABASE.md`. Uploading new files does not remove obsolete files from GitHub. A fresh repository avoids that cleanup step. Keep `alembic/versions/0001` through `0004`: existing databases need the complete upgrade history.
+To update an existing repository, replace its source with this cleaned version and remove old files listed in `docs/DATABASE.md`. Uploading new files does not remove obsolete files from GitHub. A fresh repository avoids that cleanup step. Keep migrations `0001` through `0005`: existing databases need the complete upgrade history.
 
 Do not upload `.env`, populated `secrets.toml`, API keys, or database passwords. The prepared archive excludes private settings.
 
@@ -29,7 +29,7 @@ Click **Connect**. Copy the PostgreSQL connection string twice:
 
 Both must refer to the **same branch, database, and role**. The pooled hostname normally includes `-pooler`. Preserve the query parameters Neon supplies, including `sslmode=require` and, if present, `channel_binding=require`. Copy only the connection URL, without a surrounding `psql` command or shell quotes. [Neon connection pooling documentation](https://neon.com/docs/connect/connection-pooling).
 
-For an existing database, create a backup branch in Neon before deploying this upgrade. The app will apply migration `0004` automatically. It consolidates old reviews, removes the retired classifier tables, and adds work status. See `docs/DATABASE.md` before upgrading a database you want to preserve.
+For an existing database, create a backup branch in Neon before deploying this upgrade. The app applies migrations through `0005` automatically. Migration `0004` consolidates old reviews, removes retired classifier tables, and adds work status. Migration `0005` adds contributor guides while preserving existing issue data. See `docs/DATABASE.md` for details.
 
 ## 3. Generate the encryption secret in Neon
 
@@ -90,7 +90,7 @@ You can change secrets later in the app's settings. Save, reboot the app if need
 
 In GitHub, open **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**.
 
-Choose the account that owns your demo repository as resource owner, set an expiration after your interview, and select that public repository. Grant repository permissions **Metadata: read** and **Issues: read**. A repository you own personally is the simplest demonstration setup; organization access can require approval or additional permission visibility.
+Choose the account that owns your demo repository as resource owner, set an expiration after your interview, and select that public repository. Grant repository permissions **Metadata: read**, **Issues: read**, and **Contents: read**. Contents access supports source retrieval for contributor guides. A repository you own personally is the simplest demonstration setup; organization access can require approval or additional permission visibility.
 
 Copy the token once and keep it private. In TriageDesk, expand **Sign in with a fine-grained GitHub token**, paste it into **GitHub token**, and choose **Verify GitHub identity**. It belongs in this form, not in Streamlit's app-wide secrets. TriageDesk encrypts it in Neon and returns an opaque application session to the UI.
 
@@ -116,7 +116,7 @@ The [demo walkthrough](DEMO.md) provides prepared issue text, an interview seque
 
 ## Optional: browser sign-in
 
-After token sign-in works, you can register a GitHub App with read access to Issues and Metadata, enable its device flow, and add its **Client ID** as `GITHUB_CLIENT_ID` in Streamlit Secrets. Install/authorize it for your demo repository. Reboot, then use **Sign in with GitHub**. No client secret or callback server is needed for the device-code exchange. [GitHub device flow](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app#using-the-device-flow-to-generate-a-user-access-token).
+After token sign-in works, you can register a GitHub App with read access to Issues, Metadata, and Contents, enable its device flow, and add its **Client ID** as `GITHUB_CLIENT_ID` in Streamlit Secrets. Install/authorize it for your demo repository. Reboot, then use **Sign in with GitHub**. No client secret or callback server is needed for the device-code exchange. [GitHub device flow](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app#using-the-device-flow-to-generate-a-user-access-token).
 
 ## Troubleshooting
 

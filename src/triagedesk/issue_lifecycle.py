@@ -3,6 +3,7 @@
 from sqlalchemy import delete, select, update
 
 from triagedesk.models import (
+    ContributorGuide,
     Issue,
     IssueActivity,
     LabelAnalysis,
@@ -22,7 +23,7 @@ def purge_closed(db, repository_id):
     )
     if not ids:
         return 0
-    for table in [LabelAssignment, LabelReview, LabelAnalysis, IssueActivity]:
+    for table in [ContributorGuide, LabelAssignment, LabelReview, LabelAnalysis, IssueActivity]:
         db.execute(delete(table).where(table.issue_id.in_(ids)))
     db.execute(update(Issue).where(Issue.id.in_(ids)).values(snapshot_id=None))
     # Intentional bulk purge: immutable historical snapshots remain immutable during normal updates.

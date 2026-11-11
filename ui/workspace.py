@@ -6,6 +6,7 @@ from html import escape
 import pandas as pd
 import streamlit as st
 from account import connections_page
+from contributor_guide import contributor_guide
 
 GROUP_TITLES = {"type": "Type", "priority": "Priority", "area": "Area", "contributor": "Contributor"}
 WORK_STATUSES = ["open", "in progress", "blocked"]
@@ -377,6 +378,8 @@ def issue_details(repository_id, api, key_for, can_write):
                         st.session_state.pop("selected_issue", None)
                         st.session_state["review_saved"] = True
                         st.rerun()
+
+    contributor_guide(issue, api, key_for, can_write)
 
 
 def label_settings(repository_id, info, api, can_write):

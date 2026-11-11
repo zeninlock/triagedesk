@@ -12,8 +12,8 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from triagedesk import contributor_guides, triage
 from triagedesk import db as database
-from triagedesk import triage
 from triagedesk.ai_labels import (
     GROUPS,
     provider_cooldown,
@@ -26,7 +26,7 @@ from triagedesk.config import settings
 from triagedesk.connection_routes import Actor
 from triagedesk.connection_routes import router as connection_router
 from triagedesk.db import get_session
-from triagedesk.models import ImportRun, Issue, IssueActivity, Repository, RepositoryAccess
+from triagedesk.models import ContributorGuide, ImportRun, Issue, IssueActivity, Repository, RepositoryAccess
 
 
 @asynccontextmanager
@@ -132,7 +132,7 @@ def ready(db: DB):
         db.execute(text("SELECT 1"))
         db.execute(select(Repository.id).limit(1))
         version = db.execute(text("SELECT version_num FROM alembic_version")).scalar()
-        if version != "0004":
+        if version != "0005":
             raise HTTPException(503, "Database migration required")
     except SQLAlchemyError:
         raise HTTPException(503, "Database unavailable or migrations missing") from None
@@ -320,6 +320,46 @@ def review_labels(
         reviewer = f"github:{actor.login}#{actor.github_user_id}"
     review = triage.save_label_review(db, issue, repo, payload, reviewer)
     return {"id": review.id, "revision": review.revision, "labels": review.labels}
+
+
+@app.get("/triage/issues/{issue_id}/guide")
+def contributor_guide(issue_id: int, db: DB, actor: Actor):
+    issue = active_issue(db, issue_id, actor)
+    contributor_guides.expire_guides(db)
+    return contributor_guides.guide_output(contributor_guides.latest_guide(db, issue.id), issue)
+
+
+@app.post("/triage/issues/{issue_id}/guide", status_code=202)
+def generate_contributor_guide(
+    issue_id: int,
+    payload: contributor_guides.GuideRequest,
+    tasks: BackgroundTasks,
+    db: DB,
+    actor: Annotated[Principal, Depends(writer)],
+):
+    issue = active_issue(db, issue_id, actor)
+    authorize_repository_write(db, actor, issue.repository_id)
+    row, created = contributor_guides.start_guide(db, issue, actor, payload)
+    if created:
+        tasks.add_task(contributor_guides.run_guide, row.id)
+    return contributor_guides.guide_output(row, issue)
+
+
+@app.put("/triage/issues/{issue_id}/guide/{guide_id}/approval")
+def approve_contributor_guide(
+    issue_id: int,
+    guide_id: str,
+    payload: contributor_guides.GuideApproval,
+    db: DB,
+    actor: Annotated[Principal, Depends(writer)],
+):
+    issue = active_issue(db, issue_id, actor)
+    authorize_repository_write(db, actor, issue.repository_id)
+    row = db.get(ContributorGuide, guide_id)
+    if not row or row.issue_id != issue.id:
+        raise HTTPException(404, "Contributor guide not found")
+    row = contributor_guides.save_approval(db, issue, row, actor, payload)
+    return contributor_guides.guide_output(row, issue)
 
 
 @app.put("/triage/issues/{issue_id}/status")

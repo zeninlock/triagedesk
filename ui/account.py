@@ -49,7 +49,7 @@ def sign_in(meta, api):
         ):
             st.write(
                 "Use a fine-grained personal access token for the public repository you maintain, "
-                "with Metadata: read and Issues: read. GitHub verifies the account behind the token. "
+                "with Metadata: read, Issues: read, and Contents: read for contributor guides. GitHub verifies the account behind the token. "
                 "Having a read token alone does not make an account a repository maintainer."
             )
             st.link_button(

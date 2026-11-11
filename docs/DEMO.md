@@ -108,4 +108,6 @@ Optional: show a newly created issue arriving during synchronization, but do not
 - Help wanted means actionable work for a contributor; good first issue additionally requires clearly simple, bounded, low-risk scope.
 - No separate trained classifier, embedding model, GPU, or model artifact download is required.
 - Synchronization and analysis progress while the workspace is open and hosted compute is awake. This is not an always-running distributed task worker.
-- Area and priority are inferred from issue text. The model does not inspect the repository's source code or verify production impact.
+- Area and priority labels are inferred from issue text. The separate, explicitly requested contributor guide reads selected repository excerpts and checks citations; it does not verify production impact or prove a fix correct.
+
+For the contributor-guide walkthrough, prepare a saved guide and follow [CONTRIBUTOR_GUIDES.md](CONTRIBUTOR_GUIDES.md#interview-demonstration). It needs real repository files; reports describing an imaginary app cannot establish code references.
