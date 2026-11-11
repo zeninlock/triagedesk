@@ -269,3 +269,29 @@ issue_table(1, api, 'ai-progress')
     assert not app.warning
     assert app.dataframe[0].value.iloc[0]["AI triage"] == "Auto-sorted"
     assert app.dataframe[0].value.iloc[0]["Type"] == "type: bug"
+
+
+def test_retry_button_remains_available_during_an_active_sync():
+    ui_path = str(Path(__file__).resolve().parents[1] / "ui")
+    app = AppTest.from_string(f"""
+import sys
+sys.path.insert(0,{ui_path!r})
+import streamlit as st
+from workspace import watch_workspace
+info={{
+ 'counts':{{'pending':1}},'model':'test-model','ai_configured':True,
+ 'ai_activity':{{'revision':'failed','can_retry':True,'states':{{'failed':1}},
+ 'error':{{'message':'An earlier request failed authentication.','action':'Retry now.','automatic_retry':False}}}}
+}}
+def api(path,method='GET',**kwargs):
+ if path.endswith('/refresh'):
+  return {{'id':'active-sync','status':'running','stage':'Fetching issues'}}
+ if path.endswith('/summary'):
+  return info
+ raise AssertionError(path)
+watch_workspace(1,api,info)
+""")
+    app.run(timeout=30)
+    assert not app.exception
+    button = next(b for b in app.button if b.label == "Run AI now")
+    assert not button.disabled

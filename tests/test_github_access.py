@@ -487,3 +487,73 @@ def test_revoked_maintainer_permissions_block_status_and_label_writes(github_cli
         ).status_code
         == 403
     )
+
+
+def failed_authentication(database, repo_id):
+    with Session(database) as db:
+        issue = db.scalar(select(Issue).where(Issue.repository_id == repo_id))
+        row = LabelAnalysis(
+            issue_id=issue.id,
+            snapshot_id=issue.snapshot_id,
+            analyzer_key=ai_labels.analyzer_key(db.get(Repository, repo_id)),
+            model=settings().ai_model,
+            status="failed",
+            error="invalid_credentials",
+        )
+        db.add(row)
+        db.commit()
+        return row.id
+
+
+def test_explicit_retry_clears_auth_error_even_when_joining_active_sync(github_client, database, monkeypatch):
+    from test_ai_labels import use_ai
+
+    identity_provider(monkeypatch)
+    headers = login(github_client)
+    repo_id = grant(database)
+    pending_issues(database, repo_id, 1)
+    calls = use_ai(monkeypatch)
+    failure_id = failed_authentication(database, repo_id)
+    monkeypatch.setattr(connection_routes, "run_job", lambda _: None)
+    job = github_client.post(
+        "/connections", headers=headers, json={"repository": "maintainer/project"}
+    ).json()
+    response = github_client.post(f"/triage/{repo_id}/analyze", headers=headers)
+    assert response.status_code == 202 and response.json()["id"] == job["id"]
+    with Session(database) as db:
+        assert db.get(LabelAnalysis, failure_id).error is None
+    ai_labels.analyze_repository(database, repo_id)
+    assert len(calls) == 1
+
+
+def test_explicit_retry_clears_auth_error_even_during_short_scheduling_delay(
+    github_client, database, monkeypatch
+):
+    from test_ai_labels import use_ai
+
+    identity_provider(monkeypatch)
+    headers = login(github_client)
+    repo_id = grant(database)
+    pending_issues(database, repo_id, 1)
+    calls = use_ai(monkeypatch)
+    failure_id = failed_authentication(database, repo_id)
+    with Session(database) as db:
+        db.add(
+            ConnectionJob(
+                id="recent-pass",
+                github_user_id=42,
+                repository_name="maintainer/project",
+                repository_id=repo_id,
+                incremental=True,
+                object_limit=500,
+                status="complete",
+                lease_until=utcnow(),
+            )
+        )
+        db.commit()
+    response = github_client.post(f"/triage/{repo_id}/analyze", headers=headers)
+    assert response.status_code == 202 and response.json()["status"] == "idle"
+    with Session(database) as db:
+        assert db.get(LabelAnalysis, failure_id).error is None
+    ai_labels.analyze_repository(database, repo_id)
+    assert len(calls) == 1

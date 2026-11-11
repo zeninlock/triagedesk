@@ -30,6 +30,10 @@ def _backend_configuration(values: Mapping) -> dict[str, str]:
         raise CommunityStartupError(
             "Set OPENAI_API_KEY to one quoted API key, without spaces or line breaks."
         )
+    if openai_key.strip() and openai_key.strip() == key.strip():
+        raise CommunityStartupError(
+            "OPENAI_API_KEY matches AUTH_ENCRYPTION_KEY. Use the key created on OpenAI for OPENAI_API_KEY; keep the encryption secret unchanged."
+        )
     if not database.startswith(("postgres://", "postgresql://", "postgresql+psycopg://")):
         raise CommunityStartupError("Set DATABASE_URL to your PostgreSQL connection string in app secrets.")
     if len(key) < 32 or key.startswith("REPLACE_"):
@@ -61,6 +65,10 @@ def _backend_configuration(values: Mapping) -> dict[str, str]:
 
 def backend_environment(values: Mapping) -> dict[str, str]:
     env = os.environ.copy()
+    # Project-scoped API keys carry their own project. Do not let unrelated
+    # inherited SDK headers override the key's scope.
+    for name in ("OPENAI_ORG_ID", "OPENAI_PROJECT_ID"):
+        env.pop(name, None)
     env.update(_backend_configuration(values))
     return env
 

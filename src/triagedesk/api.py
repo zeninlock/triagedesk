@@ -1,6 +1,7 @@
 import json
 import logging
 import time
+from contextlib import asynccontextmanager
 from typing import Annotated, Literal
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request
@@ -11,10 +12,12 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from triagedesk import db as database
 from triagedesk import triage
 from triagedesk.ai_labels import (
     GROUPS,
     provider_cooldown,
+    recover_authentication_failures,
     retry_correctable_failures,
     taxonomy_for,
 )
@@ -25,8 +28,22 @@ from triagedesk.connection_routes import router as connection_router
 from triagedesk.db import get_session
 from triagedesk.models import ImportRun, Issue, IssueActivity, Repository, RepositoryAccess
 
+
+@asynccontextmanager
+async def lifespan(app):
+    recovered = recover_authentication_failures(database.engine())
+    if recovered:
+        logging.getLogger("triagedesk").info(
+            json.dumps({"event": "authentication_failures_requeued", "count": recovered})
+        )
+    yield
+
+
 app = FastAPI(
-    title="TriageDesk", version="1.0.0", description="Human-reviewed triage. GitHub operations are read-only."
+    lifespan=lifespan,
+    title="TriageDesk",
+    version="1.0.0",
+    description="Human-reviewed triage. GitHub operations are read-only.",
 )
 app.include_router(connection_router)
 log = logging.getLogger("triagedesk")
@@ -341,11 +358,6 @@ def schedule_workspace_job(repository_id, tasks, db, actor, ai_only=False, retry
         raise HTTPException(403, "This installation is read-only")
     repo = triage_repository(db, repository_id, actor)
     expire_jobs(db)
-    active = db.scalar(select(ConnectionJob).where(ConnectionJob.active_key == "import"))
-    if active:
-        if active.github_user_id == actor.github_user_id and active.repository_id == repository_id:
-            return job_output(active)
-        return {"status": "busy"}
     if ai_only:
         if not settings().openai_api_key.get_secret_value():
             raise HTTPException(503, "The backend has not loaded an OpenAI API key")
@@ -354,6 +366,18 @@ def schedule_workspace_job(repository_id, tasks, db, actor, ai_only=False, retry
             raise HTTPException(
                 429, f"AI is waiting for provider backoff until {aware(cooldown.retry_after).isoformat()}"
             )
+    active = db.scalar(select(ConnectionJob).where(ConnectionJob.active_key == "import"))
+    if active and (active.github_user_id != actor.github_user_id or active.repository_id != repository_id):
+        return {"status": "busy"}
+    verified = None
+    if ai_only and retry_failed:
+        # Apply the retry even when joining an import or waiting for its short
+        # scheduling interval. Otherwise Run AI now can silently leave an old
+        # authentication error blocking every subsequent background pass.
+        verified = verify_maintainer(actor, repo.full_name)
+        retry_correctable_failures(db, repo)
+    if active:
+        return job_output(active)
     latest_query = select(ConnectionJob.created_at).where(ConnectionJob.repository_id == repository_id)
     if not ai_only:
         latest_query = latest_query.where(ConnectionJob.result["ai_only"].as_boolean().is_not(True))
@@ -361,10 +385,8 @@ def schedule_workspace_job(repository_id, tasks, db, actor, ai_only=False, retry
     interval = 10 if ai_only else settings().auto_sync_seconds
     if latest and aware(latest) + timedelta(seconds=interval) > utcnow():
         return {"status": "idle"}
-    metadata, role = verify_maintainer(actor, repo.full_name)
+    metadata, role = verified or verify_maintainer(actor, repo.full_name)
     job, created = start_job(db, actor, repo.full_name, metadata, role, 3000, True)
     if created:
-        if ai_only and retry_failed:
-            retry_correctable_failures(db, repo)
         tasks.add_task(run_job, job.id, ai_only=ai_only)
     return job_output(job)

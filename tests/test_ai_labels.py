@@ -317,3 +317,56 @@ def test_closed_issue_purge_removes_dependents(database, issues, monkeypatch):
         assert purge_closed(db, repo_id) == 1
         for model in (LabelAnalysis, LabelAssignment, LabelReview, IssueActivity, Snapshot):
             assert db.scalar(select(func.count()).select_from(model).where(model.issue_id == ids[0])) == 0
+
+
+def test_backend_restart_requeues_only_authentication_failures(database, issues, monkeypatch):
+    repo_id, ids = issues
+    calls = use_ai(monkeypatch)
+    with Session(database) as db:
+        key = ai_labels.analyzer_key(db.get(Repository, repo_id))
+        for issue_id, status, error in [
+            (ids[0], "failed", "invalid_credentials"),
+            (ids[1], "complete", None),
+            (ids[2], "failed", "schema_invalid"),
+        ]:
+            issue = db.get(Issue, issue_id)
+            db.add(
+                LabelAnalysis(
+                    issue_id=issue_id,
+                    snapshot_id=issue.snapshot_id,
+                    analyzer_key=key,
+                    model=settings().ai_model,
+                    status=status,
+                    error=error,
+                )
+            )
+        db.commit()
+    assert ai_labels.recover_authentication_failures(database) == 1
+    assert ai_labels.analyze_issue(database, ids[0]) == "analyzed"
+    assert ai_labels.analyze_issue(database, ids[1]) == "cached"
+    assert ai_labels.analyze_issue(database, ids[2]) == "needs_attention"
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("model", ["gpt-5-nano", "gpt-5-mini", "gpt-5", "gpt-5-nano-2025-08-07"])
+def test_original_gpt5_family_keeps_room_for_structured_output(monkeypatch, model):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk_fake_test_key")
+    monkeypatch.setenv("AI_MODEL", model)
+    settings.cache_clear()
+
+    def respond(request):
+        body = json.loads(request.content)
+        assert body["model"] == model
+        assert body["reasoning"] == {"effort": "minimal"}
+        assert body["max_output_tokens"] == 4096
+        return httpx.Response(200, json=provider_response(json.dumps(proposed())))
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        result = ai_labels.request_analysis(
+            "API fails", "All customers are blocked.", [], ai_labels.DEFAULT_TAXONOMY, client
+        )
+    assert len(result.labels) >= 2
+
+
+def test_non_reasoning_model_receives_no_reasoning_parameter():
+    assert ai_labels.model_request_options("gpt-4.1-mini") == {"max_output_tokens": 2048}

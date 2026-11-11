@@ -75,7 +75,7 @@ ERROR_MESSAGES = {
         "The installation owner must add the key in hosting secrets.",
     ),
     "invalid_credentials": (
-        "OpenAI rejected the API key (401).",
+        "A previous OpenAI request failed authentication (401).",
         "Replace the key in hosting secrets, reload the app, then retry AI.",
     ),
     "permission_denied": (
@@ -170,7 +170,7 @@ def retry_correctable_failures(db, repository):
     current = select(Issue.snapshot_id).where(
         Issue.repository_id == repository.id, Issue.state == "open", Issue.available.is_(True)
     )
-    db.execute(
+    changed = db.execute(
         update(LabelAnalysis)
         .where(
             LabelAnalysis.snapshot_id.in_(current),
@@ -181,6 +181,35 @@ def retry_correctable_failures(db, repository):
         .values(retry_after=None, error=None)
     )
     db.commit()
+    return changed.rowcount
+
+
+def recover_authentication_failures(db_engine):
+    """On backend startup, allow one fresh attempt with the currently loaded key.
+
+    A failed request belongs to a previous credential configuration. Completed
+    analyses remain cached; a truly invalid key will pause the queue again.
+    """
+    if not settings().openai_api_key.get_secret_value():
+        return 0
+    with Session(db_engine) as db:
+        result = db.execute(
+            update(LabelAnalysis)
+            .where(LabelAnalysis.status == "failed", LabelAnalysis.error == "invalid_credentials")
+            .values(error=None, retry_after=None)
+            .execution_options(synchronize_session=False)
+        )
+        db.commit()
+        return result.rowcount
+
+
+def model_request_options(model):
+    # The original GPT-5 family defaults to medium reasoning, which can consume
+    # the entire small output budget before the structured answer is produced.
+    minimal_models = ("gpt-5", "gpt-5-mini", "gpt-5-nano")
+    if any(model == name or model.startswith(name + "-20") for name in minimal_models):
+        return {"reasoning": {"effort": "minimal"}, "max_output_tokens": 4096}
+    return {"max_output_tokens": 2048}
 
 
 def taxonomy_for(repository=None):
@@ -336,7 +365,7 @@ def request_analysis(title, body, source_labels, taxonomy, client=None):
             response = provider.responses.create(
                 model=settings().ai_model,
                 store=False,
-                max_output_tokens=2048,
+                **model_request_options(settings().ai_model),
                 input=[
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {

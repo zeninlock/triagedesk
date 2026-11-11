@@ -183,3 +183,16 @@ def test_migration_uses_direct_neon_url_without_changing_runtime_url(monkeypatch
                 DATABASE_URL="postgresql://pooled/db", MIGRATION_DATABASE_URL="postgresql://direct/db"
             )
         )
+
+
+def test_openai_key_cannot_be_the_neon_encryption_secret():
+    with pytest.raises(CommunityStartupError, match="matches AUTH_ENCRYPTION_KEY") as exc:
+        backend_environment(community_values(OPENAI_API_KEY="k" * 48))
+    assert "k" * 48 not in str(exc.value)
+
+
+def test_cloud_backend_drops_unrelated_inherited_openai_scope_headers(monkeypatch):
+    monkeypatch.setenv("OPENAI_ORG_ID", "unrelated-org")
+    monkeypatch.setenv("OPENAI_PROJECT_ID", "unrelated-project")
+    env = backend_environment(community_values(OPENAI_API_KEY="sk_test_key"))
+    assert "OPENAI_ORG_ID" not in env and "OPENAI_PROJECT_ID" not in env

@@ -84,7 +84,7 @@ Use your actual Neon strings, including their original query parameters. Keep th
 
 Save and click **Deploy**. Streamlit installs the pinned dependencies, runs the database upgrades using the direct Neon URL, starts the private backend, and shows the sign-in screen. No manual SQL schema creation or separate API deployment is needed.
 
-You can change secrets later in the app's settings. Save, reboot the app if needed, then refresh it. If you corrected an earlier OpenAI error, also choose **Run AI now** inside the workspace. [Streamlit Secrets management](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management).
+You can change secrets later in the app's settings. Save, reboot the app if needed, then refresh it. Restarting the backend requeues saved authentication failures using the current key. You can also choose **Run AI now** inside the workspace; it records the retry even if a synchronization pass is already running. [Streamlit Secrets management](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management).
 
 ## 7. Create a GitHub sign-in token
 
@@ -137,3 +137,12 @@ After token sign-in works, you can register a GitHub App with read access to Iss
 | App is asleep | Open it before the interview and let Streamlit wake it. New analysis/sync require an active workspace. |
 
 Use one Streamlit app instance for this setup. A sleeping app or closed browser does not run a permanent background worker. Cached results remain in Neon. Keep provider dashboards available privately during rehearsal, and do not display credentials during the demo.
+
+
+## Authentication recovery and GPT-5 nano
+
+An authentication warning represents a saved request failure, not a live test of the key currently in Secrets. After changing the key, rebooting the backend permits a fresh attempt and retains all completed analyses. Run AI now also clears retryable failures when it joins an active sync or waits for its short scheduling interval.
+
+Keep OPENAI_API_KEY different from AUTH_ENCRYPTION_KEY: the first comes from OpenAI; the second is the random value used to encrypt GitHub credentials. The app now rejects identical values before making a provider request.
+
+For the original GPT-5, GPT-5 mini, and GPT-5 nano models, the app requests minimal reasoning and reserves a 4,096-token output budget. Reasoning consumes part of the output limit, so a small budget with the default reasoning setting can end before JSON is returned. The model selection remains configurable; no model change is needed to recover from a saved 401. See [OpenAI's GPT-5 parameter documentation](https://developers.openai.com/cookbook/examples/gpt-5/gpt-5_new_params_and_tools) and [reasoning token limits](https://developers.openai.com/api/docs/guides/reasoning).

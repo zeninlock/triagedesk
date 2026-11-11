@@ -120,18 +120,18 @@ def watch_workspace(repository_id, api, displayed_info):
                 f"AI progress: {states.get('running', 0)} analyzing · {states.get('queued', pending)} queued · "
                 f"{states.get('failed', 0)} failed attempts. Model: {current['model']}."
             )
-            busy = job.get("status") in {"queued", "running", "busy"}
-            if st.button(
-                "Run AI now", disabled=busy or not activity.get("can_retry", current.get("ai_configured"))
-            ):
+            if st.button("Run AI now", disabled=not activity.get("can_retry", current.get("ai_configured"))):
                 started = api(f"/triage/{repository_id}/analyze", "POST")
                 if started:
                     if started.get("id"):
                         st.session_state[f"active_job_{repository_id}"] = started["id"]
-                        st.toast("AI pass queued. Saved analyses will be reused.")
+                        st.toast("Retry saved. Pending AI work will continue; completed analyses are reused.")
+                        st.rerun()
+                    elif started.get("status") == "idle":
+                        st.toast("Retry saved. Pending issues will resume automatically.")
                         st.rerun()
                     else:
-                        st.info("A recent pass is still within the retry interval. Try again shortly.")
+                        st.info("Another repository is processing. Try again after it finishes.")
             st.caption(
                 "Run AI now analyzes pending issues directly, without re-importing GitHub issues. Provider backoff still applies."
             )
