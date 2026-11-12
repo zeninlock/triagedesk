@@ -219,6 +219,70 @@ def test_completed_analysis_is_cached_and_status_changes_do_not_call_model(datab
         assert db.get(Issue, ids[0]).work_status == "in progress"
 
 
+@pytest.mark.parametrize(
+    "confidence,uncertain,reviewed,expected",
+    [
+        (0.2499, False, False, "needs_review"),
+        (0.25, False, False, "auto_sorted"),
+        (0.7, False, False, "auto_sorted"),
+        (0.25, True, False, "needs_review"),
+        (0.95, True, False, "needs_review"),
+        (0.2, False, True, "reviewed"),
+    ],
+)
+def test_lower_cutoff_reuses_saved_analyses_and_preserves_uncertainty_and_human_reviews(
+    database,
+    issues,
+    monkeypatch,
+    confidence,
+    uncertain,
+    reviewed,
+    expected,
+):
+    repo_id, ids = issues
+    monkeypatch.setenv("AI_CONFIDENCE_THRESHOLD", "0.85")
+    calls = use_ai(monkeypatch, confidence=confidence, uncertain=uncertain)
+    ai_labels.analyze_issue(database, ids[0])
+    with Session(database) as db:
+        issue, repo = db.get(Issue, ids[0]), db.get(Repository, repo_id)
+        issue.work_status = "in progress"
+        if reviewed:
+            triage.save_label_review(
+                db,
+                issue,
+                repo,
+                triage.LabelReviewInput(
+                    labels=[
+                        {"group": "type", "name": "type: docs"},
+                        {"group": "priority", "name": "priority: low"},
+                    ],
+                    snapshot_id=issue.snapshot_id,
+                    expected_revision=0,
+                    taxonomy_hash=digest(ai_labels.DEFAULT_TAXONOMY),
+                    idempotency_key="threshold-review",
+                ),
+                "maintainer",
+            )
+        db.commit()
+        snapshot_id, old_key = issue.snapshot_id, ai_labels.analyzer_key(repo)
+    monkeypatch.setenv("AI_CONFIDENCE_THRESHOLD", "0.25")
+    settings.cache_clear()
+    assert settings().ai_confidence_threshold == 0.25
+    assert ai_labels.analyze_issue(database, ids[0]) == "cached"
+    assert len(calls) == 1
+    with Session(database) as db:
+        repo = db.get(Repository, repo_id)
+        page = triage.list_labeled_issues(db, repo)
+        item = next(x for x in page["items"] if x["id"] == ids[0])
+        assert item["status"] == expected
+        assert item["snapshot_id"] == snapshot_id and item["work_status"] == "in progress"
+        assert ai_labels.analyzer_key(repo) == old_key
+        summary = triage.summary(db, repo)
+        assert summary["threshold"] == 0.25 and summary["counts"][expected] == 1
+        if reviewed:
+            assert any(x["name"] == "type: docs" for x in item["labels"])
+
+
 def test_human_review_overrides_ai_distribution_and_prevents_repeat_calls(database, issues, monkeypatch):
     repo_id, ids = issues
     calls = use_ai(monkeypatch)

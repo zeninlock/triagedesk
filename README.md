@@ -6,7 +6,7 @@ Start with [the complete deployment guide](docs/HOSTING.md), then follow [the in
 
 ## What it does
 
-Connect a public repository you maintain. OpenAI reads each issue's title and description and returns its type, inferred priority, primary area, contributor suitability, and a short explanation in one structured response. Confident decisions are auto-sorted; uncertain decisions appear in **Needs review**. You can correct any labels.
+Connect a public repository you maintain. OpenAI reads each issue's title and description and returns its type, inferred priority, primary area, contributor suitability, and a short explanation in one structured response. Decisions meeting the configured confidence cutoff are auto-sorted unless explicitly flagged uncertain. Other decisions appear in **Needs review**. You can correct any labels.
 
 | Group | Values |
 | --- | --- |
@@ -43,6 +43,7 @@ The [full guide](docs/HOSTING.md) covers every step, including how to generate t
 - The default model is `gpt-4.1-mini`, with strict structured output, a 2,048-token output cap, and bounded issue input.
 - Completed analyses and human reviews are reused for the same issue snapshot and classifier version. Timestamp-only GitHub changes reuse the snapshot. Text or source-label changes can require new analysis.
 - Work status changes, browsing, and refreshing completed results do not call OpenAI. Model or classification-policy changes intentionally invalidate AI results; valid human decisions are retained.
+- The default auto-sort cutoff is `0.25`. Set `AI_CONFIDENCE_THRESHOLD` to a value from `0.0` to `1.0` in Streamlit Secrets. Existing analyses use a changed cutoff without new model calls; explicit uncertainty still requires review. A 25% cutoff is a model score setting, not measured accuracy.
 - Five pending issues are processed per pass by default. The workspace continues small AI passes while open. Provider backoff is respected; invalid credentials or billing problems pause a repository's queue until explicitly retried.
 - Neon retains issues, source snapshots, analyses, reviews, status changes, and repository access across app reboots. Confirmed closed GitHub issues and their dependent workspace records are removed on synchronization.
 

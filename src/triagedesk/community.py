@@ -3,6 +3,7 @@
 import atexit
 import hashlib
 import json
+import math
 import os
 import socket
 import subprocess
@@ -14,6 +15,8 @@ import urllib.request
 from collections.abc import Mapping
 from pathlib import Path
 
+from triagedesk.config import DEFAULT_AI_CONFIDENCE_THRESHOLD
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -23,6 +26,17 @@ class CommunityStartupError(RuntimeError):
 
 def _backend_configuration(values: Mapping) -> dict[str, str]:
     """Normalize only supported settings; never log this credential-bearing mapping."""
+    threshold = values.get("AI_CONFIDENCE_THRESHOLD", DEFAULT_AI_CONFIDENCE_THRESHOLD)
+    try:
+        if isinstance(threshold, bool):
+            raise ValueError
+        threshold = float(threshold)
+        if not math.isfinite(threshold) or not 0 <= threshold <= 1:
+            raise ValueError
+    except (ValueError, TypeError, OverflowError):
+        raise CommunityStartupError(
+            "AI_CONFIDENCE_THRESHOLD must be a number from 0.0 to 1.0. Use 0.25 for a 25% cutoff."
+        ) from None
     database = str(values.get("DATABASE_URL", "")).strip()
     key = str(values.get("AUTH_ENCRYPTION_KEY", ""))
     openai_key = values.get("OPENAI_API_KEY") or ""
@@ -53,7 +67,7 @@ def _backend_configuration(values: Mapping) -> dict[str, str]:
         GITHUB_CLIENT_ID=str(values.get("GITHUB_CLIENT_ID", "")).strip(),
         OPENAI_API_KEY=openai_key.strip(),
         AI_MODEL=str(values.get("AI_MODEL", "gpt-4.1-mini")).strip(),
-        AI_CONFIDENCE_THRESHOLD=str(values.get("AI_CONFIDENCE_THRESHOLD", 0.85)),
+        AI_CONFIDENCE_THRESHOLD=str(threshold),
         AI_BATCH_SIZE=str(values.get("AI_BATCH_SIZE", 5)),
         AI_REQUEST_INTERVAL=str(values.get("AI_REQUEST_INTERVAL", 1)),
         AUTO_SYNC_SECONDS=str(values.get("AUTO_SYNC_SECONDS", 60)),

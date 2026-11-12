@@ -3,6 +3,8 @@ from functools import lru_cache
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+DEFAULT_AI_CONFIDENCE_THRESHOLD = 0.25
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore")
@@ -18,7 +20,7 @@ class Settings(BaseSettings):
     github_api_version: str = "2026-03-10"
     openai_api_key: SecretStr = SecretStr("")
     ai_model: str = "gpt-4.1-mini"
-    ai_confidence_threshold: float = Field(0.85, ge=0.5, le=1)
+    ai_confidence_threshold: float = Field(DEFAULT_AI_CONFIDENCE_THRESHOLD, ge=0, le=1, allow_inf_nan=False)
     ai_batch_size: int = Field(5, ge=1, le=100)
     ai_request_interval: float = Field(1, ge=0, le=60)
     auto_sync_seconds: int = Field(60, ge=30, le=3600)

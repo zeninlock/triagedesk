@@ -232,6 +232,8 @@ def test_cloud_bootstrap_migrates_and_serves_ready_backend(migration_database):
         with urllib.request.urlopen(backend.api_url + "/health/ready", timeout=5) as response:
             result = json.load(response)
         assert result["status"] == "ready"
+        with urllib.request.urlopen(backend.api_url + "/meta", timeout=5) as response:
+            assert json.load(response)["ai_confidence_threshold"] == 0.25
         with engine.connect() as db:
             assert db.scalar(sa.text("SELECT version_num FROM alembic_version")) == "0005"
     finally:

@@ -73,7 +73,7 @@ MIGRATION_DATABASE_URL = "postgresql://USER:PASSWORD@YOUR-HOST.neon.tech/neondb?
 AUTH_ENCRYPTION_KEY = "YOUR_64_CHARACTER_VALUE_FROM_STEP_3"
 OPENAI_API_KEY = "YOUR_OPENAI_API_KEY"
 AI_MODEL = "gpt-4.1-mini"
-AI_CONFIDENCE_THRESHOLD = 0.85
+AI_CONFIDENCE_THRESHOLD = 0.25
 AI_BATCH_SIZE = 5
 AI_REQUEST_INTERVAL = 1
 AUTO_SYNC_SECONDS = 60
@@ -85,6 +85,8 @@ Use your actual Neon strings, including their original query parameters. Keep th
 Save and click **Deploy**. Streamlit installs the pinned dependencies, runs the database upgrades using the direct Neon URL, starts the private backend, and shows the sign-in screen. No manual SQL schema creation or separate API deployment is needed.
 
 You can change secrets later in the app's settings. Save, reboot the app if needed, then refresh it. Restarting the backend requeues saved authentication failures using the current key. You can also choose **Run AI now** inside the workspace; it records the retry even if a synchronization pass is already running. [Streamlit Secrets management](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management).
+
+`AI_CONFIDENCE_THRESHOLD = 0.25` is the default auto-sort cutoff. Values from `0.0` through `1.0` are accepted; use the decimal `0.25`, not `25` or `"25%"`. The app validates this before starting the backend and reports an actionable setting error. After saving, refresh the app; a supported setting change replaces the private backend. Reboot if the previous value remains visible. **Label guide** shows the active cutoff as a percentage. Existing saved analyses are routed using that value without another AI request. Reports below the cutoff or explicitly marked uncertain remain in **Needs review**, and human-reviewed issues stay reviewed.
 
 ## 7. Create a GitHub sign-in token
 

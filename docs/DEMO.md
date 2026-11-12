@@ -77,7 +77,7 @@ LLM suggestions can vary. Present these as intended interpretations and review t
 
 ## A five-minute sequence
 
-**0:00–0:40 — Explain the problem.** Open Overview. "This organizes an issue backlog into type, priority, code area, and contributor suitability. High-confidence issues are auto-sorted; uncertain ones can be reviewed."
+**0:00–0:40 — Explain the problem.** Open Overview. "This organizes an issue backlog into type, priority, code area, and contributor suitability. AI results meeting the configured cutoff are auto-sorted unless flagged uncertain; the others can be reviewed." The default cutoff is 25%, shown in Label guide; it is not a measured accuracy claim.
 
 **0:40–1:40 — Show semantic tagging.** Open Issues. Compare the checkout failure with the README typo. Point out that the serious failure receives high priority because it blocks all users, while a simple typo is low priority and suitable for a first contribution. Open an issue to show its short AI explanation.
 

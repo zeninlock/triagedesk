@@ -30,6 +30,7 @@ def test_community_forces_github_auth_and_drops_shared_credentials(tmp_path, mon
     assert env["MODE"] == "real" and env["AUTH_MODE"] == "github"
     assert env["GITHUB_TOKEN"] == ""
     assert env["OPENAI_API_KEY"] == "free-provider-test-key"
+    assert env["AI_CONFIDENCE_THRESHOLD"] == "0.25"
 
 
 @pytest.mark.parametrize(
@@ -118,6 +119,37 @@ def test_manager_stops_old_process_before_loading_changed_secrets(monkeypatch, c
     assert manager.ensure(community_values()) is first
     assert manager.ensure(community_values(**changes)) is second
     assert events == ["started", "stopped", "started"]
+
+
+def test_manager_applies_lower_threshold_and_normalizes_numeric_strings(monkeypatch):
+    first, second = Mock(spec=CommunityBackend), Mock(spec=CommunityBackend)
+    first.alive.return_value = second.alive.return_value = True
+    start = Mock(side_effect=[first, second])
+    monkeypatch.setattr(community, "start_backend", start)
+    manager = CommunityBackendManager()
+    manager.ensure(community_values(AI_CONFIDENCE_THRESHOLD=0.85))
+    assert manager.ensure(community_values(AI_CONFIDENCE_THRESHOLD=0.25)) is second
+    first.stop.assert_called_once()
+    assert start.call_args.args[0]["AI_CONFIDENCE_THRESHOLD"] == "0.25"
+    assert manager.ensure(community_values(AI_CONFIDENCE_THRESHOLD="0.250")) is second
+    assert start.call_count == 2
+
+
+@pytest.mark.parametrize(
+    "threshold", [-0.01, 1.01, "25%", "invalid-private-value", None, True, float("nan"), float("inf")]
+)
+def test_bad_threshold_is_reported_before_migration_without_stopping_backend(monkeypatch, threshold):
+    first = Mock(spec=CommunityBackend)
+    first.alive.return_value = True
+    start = Mock(return_value=first)
+    monkeypatch.setattr(community, "start_backend", start)
+    manager = CommunityBackendManager()
+    manager.ensure(community_values())
+    with pytest.raises(CommunityStartupError, match="Use 0.25") as exc:
+        manager.ensure(community_values(AI_CONFIDENCE_THRESHOLD=threshold))
+    assert "invalid-private-value" not in str(exc.value)
+    first.stop.assert_not_called()
+    start.assert_called_once()
 
 
 def test_manager_restarts_a_crashed_backend(monkeypatch):
