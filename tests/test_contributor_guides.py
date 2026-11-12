@@ -23,7 +23,13 @@ from triagedesk.config import settings
 from triagedesk.github import GitHubClient, GitHubError, upsert_issue
 from triagedesk.issue_lifecycle import purge_closed
 from triagedesk.models import ContributorGuide, Issue, Repository, RepositoryContext, utcnow
-from triagedesk.repository_context import candidate_files, eligible, excerpt
+from triagedesk.repository_context import (
+    candidate_files,
+    eligible,
+    excerpt,
+    notebook_cells,
+    repository_context,
+)
 
 COMMIT = "a" * 40
 TREE = "b" * 40
@@ -35,11 +41,9 @@ FILES = {
 
 
 def evidence(source, quote=None):
-    lines = source["text"].splitlines()
-    position = source["text"].index(quote) if quote else 0
-    start = source["start_line"] + source["text"][:position].count("\n")
-    end = start + quote.count("\n") if quote else min(start + len(lines) - 1, start + 11)
-    return {"source_id": source["id"], "start_line": start, "end_line": end}
+    choices = list(guides.citation_catalog([source]).values())
+    selected = next(c for c in choices if not quote or quote in c["quote"])
+    return {"citation_id": selected["citation_id"]}
 
 
 def proposal(sources):
@@ -116,7 +120,7 @@ def providers(monkeypatch):
         calls["ai"].append(payload)
         assert payload["store"] is False and payload["text"]["format"]["strict"] is True
         sources = json.loads(payload["input"][1]["content"])["sources"]
-        sources = [{**s, "text": "\n".join(line["text"] for line in s["lines"])} for s in sources]
+        sources = [{**s, "text": "\n".join(c["quote"] for c in s["citations"])} for s in sources]
         value = proposal(sources)
         if calls["mutate"]:
             calls["mutate"](value)
@@ -194,23 +198,151 @@ def test_full_guide_sources_approval_cache_and_commit_updates(workspace, provide
         assert db.scalar(select(func.count()).select_from(ContributorGuide)) == 0
 
 
-@pytest.mark.parametrize("bad_kind", ["unknown_source", "fabricated_lines", "wrong_kind", "missing_start"])
+@pytest.mark.parametrize("bad_kind", ["unknown_source", "fabricated_lines", "wrong_kind"])
 def test_invented_evidence_is_never_published(workspace, providers, bad_kind):
     def mutate(value):
         if bad_kind == "unknown_source":
-            value["starting_points"][0]["evidence"][0]["source_id"] = "invented"
+            value["starting_points"][0]["evidence"][0]["citation_id"] = "invented"
         elif bad_kind == "fabricated_lines":
-            value["starting_points"][0]["evidence"][0]["start_line"] = 99999
+            value["starting_points"][0]["evidence"][0]["citation_id"] = "source_1:99999-99999"
         elif bad_kind == "wrong_kind":
             value["starting_points"][0]["evidence"] = value["completion_checklist"][0]["evidence"]
-        else:
-            value["starting_points"] = []
 
     providers["mutate"] = mutate
     assert generate(workspace).status_code == 202
     guide = read(workspace)
     assert guide["status"] == "failed" and guide["result"] == {}
     assert "could not be checked" in guide["error"]
+
+
+def test_incomplete_plan_returns_missing_context_instead_of_false_source_error(workspace, providers):
+    providers["mutate"] = lambda value: value.update(starting_points=[])
+    assert generate(workspace).status_code == 202
+    guide = read(workspace)
+    assert guide["status"] == "complete" and not guide["result"]["sufficient_context"]
+    assert guide["result"]["missing_information"] and not guide["error"]
+
+
+def test_schema_restricts_references_by_section_before_model_generation():
+    sources = [
+        {"id": "source_1", "kind": "code", "start_line": 20, "text": "def window_slice(x):\n    return x"},
+        {"id": "issue_1", "kind": "issue", "start_line": 1, "text": "Support the full-length window."},
+    ]
+    schema = guides.guide_schema(sources)
+
+    def choices(section):
+        return schema["properties"][section]["items"]["properties"]["evidence"]["items"]["properties"][
+            "citation_id"
+        ]["enum"]
+
+    assert choices("starting_points") == ["source_1:20-21"]
+    assert choices("completion_checklist") == ["issue_1:1-1"]
+    assert schema["properties"]["prerequisites"]["maxItems"] == 0
+    assert schema["properties"]["tests"]["maxItems"] == 0
+
+
+def test_notebook_retrieval_finds_code_cells_and_caches_no_outputs(database):
+    target = "pure_bilstm_final.ipynb"
+    notebook = {
+        "nbformat": 4,
+        "metadata": {"private_metadata": "NEVER_SEND_THIS"},
+        "cells": [
+            {"cell_type": "markdown", "source": ["# Model experiments\n"]},
+            {
+                "cell_type": "code",
+                "source": [
+                    "def window_slice(x, window_ratio=0.9):\n",
+                    "    seq_len = x.shape[0]\n",
+                    "    window_size = int(seq_len * window_ratio)\n",
+                    "    start = np.random.randint(0, seq_len - window_size)\n",
+                    "    return x[start:start + window_size]\n",
+                ],
+                "outputs": [{"text": "NEVER_SEND_THIS_OUTPUT", "data": {"image/png": "binary_image"}}],
+            },
+        ],
+    }
+    contents = {
+        target: json.dumps(notebook),
+        "README.md": "# EEG\nModel experiments.",
+        "requirements.txt": "numpy\ntensorflow\n",
+    }
+    entries, blobs = [], {}
+    for n, (path, content) in enumerate(contents.items(), 1):
+        sha = str(n) * 40
+        data = content.encode()
+        entries.append({"path": path, "sha": sha, "size": len(data), "type": "blob", "mode": "100644"})
+        blobs[sha] = {"sha": sha, "encoding": "base64", "content": base64.b64encode(data).decode()}
+    entries.append(
+        {"path": "large_model.keras", "sha": "8" * 40, "size": 20_000_000, "type": "blob", "mode": "100644"}
+    )
+    fetched = []
+
+    def github(request):
+        fetched.append(request.url.path)
+        if "/commits/" in request.url.path:
+            return httpx.Response(200, json={"sha": COMMIT, "commit": {"tree": {"sha": TREE}}})
+        if "/git/trees/" in request.url.path:
+            return httpx.Response(200, json={"tree": entries, "truncated": False})
+        return httpx.Response(200, json=blobs[request.url.path.rsplit("/", 1)[1]])
+
+    client = GitHubClient(
+        client=httpx.Client(base_url="https://api.github.com", transport=httpx.MockTransport(github))
+    )
+    with Session(database) as db:
+        repo = Repository(
+            github_id=77, full_name="maintainer/project", source_url="https://github.com/maintainer/project"
+        )
+        db.add(repo)
+        db.commit()
+        repo_id = repo.id
+    title = "Handle window_ratio=1.0 in window_slice"
+    body = f"The function is in {target}. Support the full-length window."
+    sha, sources, partial = repository_context(
+        database, client, repo_id, "maintainer/project", 77, title, body, {**REPO, "default_branch": "main"}
+    )
+    assert not partial and sha == COMMIT
+    code = next(s for s in sources if s.get("cell_number") == 2)
+    assert "np.random.randint" in code["text"] and code["notebook"]
+    assert code["path"] == target and code["start_line"] == 1
+    assert not any("NEVER_SEND" in s["text"] for s in sources)
+    with Session(database) as db:
+        cache = db.scalar(select(RepositoryContext)).files
+        assert "NEVER_SEND" not in json.dumps(cache) and "binary_image" not in json.dumps(cache)
+    value = guides.GuideResult.model_validate(
+        {
+            "sufficient_context": False,
+            "starting_points": [
+                {"text": "Inspect the window selection function in cell 2.", "evidence": [evidence(code)]}
+            ],
+            "prerequisites": [],
+            "tests": [],
+            "investigation_steps": [],
+            "completion_checklist": [],
+            "missing_information": [],
+        }
+    )
+    checked = guides.verified_result(value, sources, "maintainer/project", sha, 10)
+    link = checked["starting_points"][0]["evidence"][0]
+    assert "cell 2" in link["label"] and "#L" not in link["url"]
+    assert link["url"].endswith(f"/{COMMIT}/{target}")
+    count = len(fetched)
+    repository_context(
+        database, client, repo_id, "maintainer/project", 77, title, body, {**REPO, "default_branch": "main"}
+    )
+    assert len(fetched) == count + 1  # Only resolve the commit; notebook source is cached.
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "not JSON",
+        '{"nbformat": 3, "cells": []}',
+        '{"nbformat": 4, "cells": [{"cell_type": "code", "source": [42]}]}',
+    ],
+)
+def test_invalid_notebooks_are_not_interpreted_as_source(raw):
+    with pytest.raises(ValueError):
+        notebook_cells(raw)
 
 
 def test_idempotent_retry_and_snapshot_change(workspace, providers, database):
@@ -406,7 +538,7 @@ def test_excerpt_uses_original_line_numbers_and_escapes_link_paths():
     )
     checked = guides.verified_result(value, [source, issue], "maintainer/project", COMMIT, 1)
     link = checked["starting_points"][0]["evidence"][0]["url"]
-    assert link.endswith("/src/export%20file.py#L2-L3")
+    assert link.endswith("/src/export%20file.py#L1-L12")
 
 
 def test_bounded_github_reads_reject_oversized_responses_and_redirects():

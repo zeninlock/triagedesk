@@ -2,6 +2,7 @@
 
 import base64
 import binascii
+import json
 import re
 import time
 from pathlib import PurePosixPath
@@ -15,6 +16,8 @@ from triagedesk.github import GitHubError, valid_repository
 from triagedesk.models import RepositoryContext
 
 MAX_FILE_BYTES = 100_000
+MAX_NOTEBOOK_BYTES = 1_000_000
+MAX_NOTEBOOK_SOURCE_CHARS = 100_000
 MAX_FETCH_FILES = 10
 MAX_EXCERPTS = 10
 MAX_EXCERPT_CHARS = 2400
@@ -52,6 +55,7 @@ EXTENSIONS = {
     ".yml",
     ".ini",
     ".cfg",
+    ".ipynb",
 }
 EXCLUDED = {
     "node_modules",
@@ -84,6 +88,8 @@ def terms(text):
 def source_kind(path):
     p = PurePosixPath(path)
     name = p.name.lower()
+    if name.startswith("requirements") and p.suffix == ".txt":
+        return "configuration"
     if p.suffix.lower() in {".md", ".mdx", ".rst", ".txt"}:
         return "documentation"
     if (
@@ -109,7 +115,7 @@ def eligible(entry):
         entry.get("type") == "blob"
         and entry.get("mode") in {"100644", "100755"}  # Never follow symlinks or submodules.
         and isinstance(entry.get("size"), int)
-        and 0 < entry["size"] <= MAX_FILE_BYTES
+        and 0 < entry["size"] <= (MAX_NOTEBOOK_BYTES if p.suffix.lower() == ".ipynb" else MAX_FILE_BYTES)
         and bool(SHA.fullmatch(entry.get("sha", "")))
         and not p.is_absolute()
         and ".." not in p.parts
@@ -142,6 +148,7 @@ def candidate_files(tree, title, body):
             "pyproject.toml",
             "package.json",
             "makefile",
+            "requirements.txt",
         }:
             anchors.append((len(PurePosixPath(path).parts), path, entry))
         if score:
@@ -163,6 +170,14 @@ def candidate_files(tree, title, body):
         and any(stem in PurePosixPath(x["path"]).stem for stem in stems if len(stem) > 2)
     ]
     for entry in sorted(related_tests, key=lambda x: x["path"]) + [x[2] for x in ranked]:
+        if entry not in chosen and len(chosen) < MAX_FETCH_FILES:
+            chosen.append(entry)
+    # Notebook filenames often describe a model, while the issue names a function inside it.
+    notebooks = sorted(
+        (x for x in tree if eligible(x) and x["path"].lower().endswith(".ipynb")),
+        key=lambda x: (x["size"], x["path"]),
+    )
+    for entry in notebooks[:5]:
         if entry not in chosen and len(chosen) < MAX_FETCH_FILES:
             chosen.append(entry)
     return chosen
@@ -192,6 +207,51 @@ def excerpt(path, blob_sha, content, query, source_id):
         "end_line": end,
         "text": "\n".join(lines[start:end]),
     }
+
+
+def notebook_cells(content):
+    """Keep only v4 code/markdown sources; never retain outputs, attachments, or metadata."""
+    raw = json.loads(content)
+    if not isinstance(raw, dict) or raw.get("nbformat") != 4 or not isinstance(raw.get("cells"), list):
+        raise ValueError("Unsupported notebook format")
+    cells, size = [], 0
+    for number, cell in enumerate(raw["cells"], 1):
+        if not isinstance(cell, dict) or cell.get("cell_type") not in {"code", "markdown"}:
+            continue
+        source = cell.get("source", "")
+        if isinstance(source, list) and all(isinstance(line, str) for line in source):
+            source = "".join(source)
+        if not isinstance(source, str):
+            raise ValueError("Invalid notebook source")
+        size += len(source)
+        if size > MAX_NOTEBOOK_SOURCE_CHARS:
+            raise ValueError("Notebook source exceeded the size limit")
+        if source.strip():
+            cells.append(
+                {
+                    "number": number,
+                    "kind": "code" if cell["cell_type"] == "code" else "documentation",
+                    "text": source,
+                }
+            )
+    return cells
+
+
+def notebook_excerpts(path, blob_sha, cells, query):
+    scored = sorted(
+        ((len(terms(cell["text"]) & query), cell) for cell in cells),
+        key=lambda x: (-x[0], x[1]["number"]),
+    )
+    found = []
+    for score, cell in scored[:3]:
+        if not score:
+            continue
+        item = excerpt(path, blob_sha, cell["text"], query, "")
+        if item:
+            item.update(kind=cell["kind"], cell_number=cell["number"], notebook=True)
+            item["relevance"] = score
+            found.append(item)
+    return found
 
 
 def repository_context(engine, client, repository_id, name, github_id, title, body, metadata):
@@ -254,24 +314,37 @@ def repository_context(engine, client, repository_id, name, github_id, title, bo
             break
         blob_sha = entry["sha"]
         content = files.get(blob_sha)
+        notebook = entry["path"].lower().endswith(".ipynb")
         if content is None:
             try:
-                raw = client.get(f"/repos/{name}/git/blobs/{blob_sha}", max_bytes=160_000).json()
+                limit = MAX_NOTEBOOK_BYTES if notebook else MAX_FILE_BYTES
+                raw = client.get(
+                    f"/repos/{name}/git/blobs/{blob_sha}", max_bytes=int(limit * 1.5) + 10000
+                ).json()
                 if raw.get("encoding") != "base64" or raw.get("sha") != blob_sha:
                     partial = True
                     continue
                 data = base64.b64decode(raw.get("content", "").replace("\n", ""), validate=True)
-                if len(data) > MAX_FILE_BYTES or b"\x00" in data:
+                if len(data) > limit or b"\x00" in data:
                     partial = True
                     continue
                 content = data.decode("utf-8")
+                if notebook:
+                    content = {"notebook_cells": notebook_cells(content)}
                 additions[blob_sha] = content
             except (UnicodeError, binascii.Error, ValueError):
                 partial = True
                 continue
-        item = excerpt(entry["path"], blob_sha, content, query, f"source_{len(sources) + 1}")
-        if item:
-            sources.append(item)
+        if notebook:
+            if not isinstance(content, dict) or "notebook_cells" not in content:
+                partial = True
+                continue
+            sources.extend(notebook_excerpts(entry["path"], blob_sha, content["notebook_cells"], query))
+        else:
+            item = excerpt(entry["path"], blob_sha, content, query, "")
+            if item:
+                item["relevance"] = len(terms(item["text"]) & query)
+                sources.append(item)
     if additions:
         with Session(engine) as db:
             cached = db.scalar(
@@ -282,8 +355,17 @@ def repository_context(engine, client, repository_id, name, github_id, title, bo
                 )
                 .with_for_update()
             )
+            if cached is None:
+                cached = RepositoryContext(
+                    repository_id=repository_id, commit_sha=sha, tree=tree, files={}, partial=partial
+                )
+                db.add(cached)
             combined = {**cached.files, **additions}
             cached.files = dict(list(combined.items())[-MAX_CACHED_FILES:])
             db.commit()
-    partial = partial or len(title) > 500 or len(body) > 10000
-    return sha, sources[:MAX_EXCERPTS], partial
+    partial = partial or len(title) > 500 or len(body) > 10000 or len(sources) > MAX_EXCERPTS
+    sources = sorted(sources, key=lambda x: -x.get("relevance", 0))[:MAX_EXCERPTS]
+    for n, source in enumerate(sources, 1):
+        source.pop("relevance", None)
+        source["id"] = f"source_{n}"
+    return sha, sources, partial
